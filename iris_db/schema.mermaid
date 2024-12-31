@@ -1,0 +1,37 @@
+erDiagram
+    Images ||--o{ Objects : contains
+    Objects ||--o{ Coordinates : has
+
+    Images {
+        int id PK "Autoincrement"
+        string file_name "NOT NULL"
+        blob image_data "NOT NULL"
+        float scale "NULL"
+        string mime_type "NULL"
+        bigint file_size "NULL"
+        datetime created_at "Default CURRENT_TIMESTAMP"
+        datetime updated_at "Default CURRENT_TIMESTAMP"
+    }
+
+    Objects {
+        int id PK "Autoincrement"
+        int image_id FK "NOT NULL"
+        string name "NOT NULL"
+        float R1 "NULL"
+        float R2 "NULL"
+        float R3 "NULL"
+        float R4 "NULL"
+        float R5 "NULL"
+        float R6 "NULL"
+        enum object_type "POINT, LINEAR, STATIONARY"
+        datetime created_at "Default CURRENT_TIMESTAMP"
+        datetime updated_at "Default CURRENT_TIMESTAMP"
+    }
+
+    Coordinates {
+        int id PK "Autoincrement"
+        int object_id FK "NOT NULL"
+        float x "NOT NULL"
+        float y "NOT NULL"
+        int order_index "NOT NULL"
+    }
