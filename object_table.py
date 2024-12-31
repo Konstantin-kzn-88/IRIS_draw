@@ -1,7 +1,10 @@
 # object_table.py
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMainWindow
 from PySide6.QtCore import Qt
+
+from iris_db.database import DatabaseManager
 from iris_db.models import Object, ObjectType
+from PySide6.QtWidgets import QMessageBox
 
 
 class ObjectTableWidget(QTableWidget):
@@ -11,6 +14,56 @@ class ObjectTableWidget(QTableWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.setup_table()
+
+    def delete_selected_object(self):
+        """Удаляет выбранный объект из таблицы и базы данных"""
+
+        # Получаем ID выбранного объекта
+        object_id = self.get_selected_object_id()
+        if object_id is None:
+            self.main_window.statusBar().showMessage(
+                "Объект для удаления не выбран",
+                3000
+            )
+            return
+
+        # Запрашиваем подтверждение удаления
+        confirmation = QMessageBox.question(
+            self,
+            "Подтверждение удаления",
+            "Вы действительно хотите удалить выбранный объект?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if confirmation == QMessageBox.No:
+            return
+
+        try:
+            # Удаляем объект из базы данных
+            with DatabaseManager(self.main_window.db_handler.current_db_path) as db:
+                db.objects.delete(object_id)
+
+            # Удаляем объект из графической сцены
+            if object_id in self.main_window.object_items:
+                self.main_window.object_items[object_id].cleanup()
+                del self.main_window.object_items[object_id]
+
+            # Удаляем строку из таблицы
+            current_row = self.currentRow()
+            self.removeRow(current_row)
+
+            self.main_window.statusBar().showMessage(
+                "Объект успешно удален",
+                3000
+            )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка",
+                f"Не удалось удалить объект: {str(e)}"
+            )
 
     def setup_table(self):
         # Установка колонок таблицы
@@ -58,12 +111,16 @@ class ObjectTableWidget(QTableWidget):
     def show_context_menu(self, position):
         menu = QMenu()
         edit_coordinates_action = menu.addAction("Редактировать координаты")
+        delete_action = menu.addAction("Удалить")  # Добавляем новый пункт меню
+
         action = menu.exec_(self.mapToGlobal(position))
 
         if action == edit_coordinates_action:
             object_id = self.get_selected_object_id()
             if object_id is not None and isinstance(self.main_window, QMainWindow):
                 self.main_window.start_edit_coordinates(object_id)
+        elif action == delete_action:  # Обработка нового действия
+            self.delete_selected_object()
 
     def get_selected_object_id(self):
         """Возвращает ID выбранного объекта"""
