@@ -1,6 +1,9 @@
 # main.py
+import mimetypes
 import sys
 import os
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QMenuBar, QMenu, QGraphicsView, QGraphicsScene,
@@ -365,7 +368,7 @@ class MainWindow(QMainWindow):
         actions = {
             "add": ("Добавить", self.add_plan),
             "select": ("Выбрать", self.select_plan),
-            "replace": ("Заменить", None),
+            "replace": ("Заменить", self.replace_plan),
             "save": ("Сохранить", None),
             "clear": ("Очистить", None),
             "delete": ("Удалить план с объектами", None)
@@ -437,7 +440,83 @@ class MainWindow(QMainWindow):
                 self.time_status
             )
 
+    def replace_plan(self):
+        """
+        Заменяет изображение текущего плана, сохраняя существующие объекты.
 
+        Returns:
+            bool: True если замена прошла успешно, False в случае ошибки
+        """
+        if not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Сначала подключитесь к базе данных", 3000)
+            return False
+
+        if not self.current_image_id:
+            self.statusBar().showMessage("Сначала выберите план для замены", 3000)
+            return False
+
+        try:
+            # Проверяем существование текущего плана в базе
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                current_image = db.images.get_by_id(self.current_image_id)
+                if not current_image:
+                    self.statusBar().showMessage("Текущий план не найден в базе данных", 3000)
+                    return False
+
+            # Открываем диалог выбора файла
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Выбрать новый план",
+                "",
+                "Изображения (*.jpg *.jpeg *.png)"
+            )
+
+            if not file_path:
+                return False
+
+            # Загружаем новое изображение
+            with open(file_path, 'rb') as file:
+                new_image_data = file.read()
+
+            # Проверяем, что это действительно изображение
+            pixmap = QPixmap()
+            if not pixmap.loadFromData(new_image_data):
+                self.statusBar().showMessage("Выбранный файл не является изображением", 3000)
+                return False
+
+            # Обновляем данные в базе
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                # Обновляем данные изображения
+                current_image.image_data = new_image_data
+                current_image.file_name = Path(file_path).name
+                current_image.file_size = len(new_image_data)
+                current_image.mime_type, _ = mimetypes.guess_type(file_path)
+
+                # Сохраняем изменения
+                db.images.update(current_image)
+
+            # Обновляем отображение на сцене
+            self.scene.clear()
+            pixmap_item = self.scene.addPixmap(pixmap)
+            self.view.fitInView(
+                self.scene.sceneRect(),
+                Qt.AspectRatioMode.KeepAspectRatio
+            )
+
+            # Перезагружаем объекты
+            self.load_objects_from_image(self.current_image_id)
+
+            self.statusBar().showMessage(
+                f"План успешно заменен на {Path(file_path).name}",
+                3000
+            )
+            return True
+
+        except Exception as e:
+            error_msg = f"Ошибка при замене плана: {str(e)}"
+            self.statusBar().showMessage(error_msg, 3000)
+            print(f"Подробности ошибки: {e}")
+            return False
 
     def toggle_scale_mode(self):
         """Включает/выключает режим измерения масштаба"""
