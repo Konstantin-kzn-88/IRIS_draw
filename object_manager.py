@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtCore import QPointF
 from iris_db.models import Object, Coordinate, ObjectType
 from iris_db.database import DatabaseManager
+from temp_drawing import TempDrawingManager
 
 
 class ObjectManager:
@@ -13,12 +14,13 @@ class ObjectManager:
         self.temp_coordinates = []
         self.is_drawing = False
         self.current_object_type = None
+        self.temp_drawing = TempDrawingManager(main_window.view.scene())
 
     def start_drawing_object(self, object_type: ObjectType):
         """Начинает процесс рисования нового объекта"""
         if not self.main_window.db_handler.current_db_path:
             QMessageBox.warning(self.main_window, "Предупреждение",
-                                "Сначала подключитесь к базе данных")
+                              "Сначала подключитесь к базе данных")
             return
 
         self.current_object_type = object_type
@@ -27,8 +29,6 @@ class ObjectManager:
 
         # Включаем отслеживание мыши для view
         self.main_window.view.setMouseTracking(True)
-
-        # Устанавливаем курсор-перекрестие
         self.main_window.view.setCursor(Qt.CrossCursor)
 
         # Показываем сообщение в статусбаре
@@ -38,6 +38,13 @@ class ObjectManager:
             ObjectType.STATIONARY: "Кликайте для добавления точек стационарного объекта. Двойной клик для замыкания"
         }
         self.main_window.statusBar().showMessage(msg[object_type])
+
+    def handle_mouse_move(self, scene_pos: QPointF):
+        """Обрабатывает движение мыши при рисовании"""
+        if not self.is_drawing:
+            return
+
+        self.temp_drawing.update_drawing(scene_pos)
 
     def handle_mouse_click(self, scene_pos: QPointF, double_click: bool = False):
         """Обрабатывает клик мыши при рисовании объекта"""
@@ -55,6 +62,9 @@ class ObjectManager:
         """Обработка клика для точечного объекта"""
         coord = Coordinate(None, 0, scene_pos.x(), scene_pos.y(), 0)
         self.temp_coordinates = [coord]
+
+        # Отображаем временную точку
+        self.temp_drawing.start_drawing("point", scene_pos)
         self._finish_drawing()
 
     def _handle_linear_click(self, scene_pos: QPointF, double_click: bool):
@@ -62,27 +72,41 @@ class ObjectManager:
         coord = Coordinate(None, 0, scene_pos.x(), scene_pos.y(), len(self.temp_coordinates))
         self.temp_coordinates.append(coord)
 
+        # Обновляем временное отображение
+        if len(self.temp_coordinates) == 1:
+            self.temp_drawing.start_drawing("linear", scene_pos)
+        else:
+            self.temp_drawing.add_vertex(scene_pos)
+
         if double_click and len(self.temp_coordinates) >= 2:
             self._finish_drawing()
 
     def _handle_stationary_click(self, scene_pos: QPointF, double_click: bool):
         """Обработка клика для стационарного объекта"""
         if double_click and len(self.temp_coordinates) >= 3:
-            # Замыкаем контур, добавляя первую точку в конец
+            # Замыкаем контур
             first_coord = self.temp_coordinates[0]
             last_coord = Coordinate(None, 0, first_coord.x, first_coord.y, len(self.temp_coordinates))
             self.temp_coordinates.append(last_coord)
+
+            # Замыкаем временное отображение
+            self.temp_drawing.close_polygon()
             self._finish_drawing()
         else:
             coord = Coordinate(None, 0, scene_pos.x(), scene_pos.y(), len(self.temp_coordinates))
             self.temp_coordinates.append(coord)
+
+            # Обновляем временное отображение
+            if len(self.temp_coordinates) == 1:
+                self.temp_drawing.start_drawing("stationary", scene_pos)
+            else:
+                self.temp_drawing.add_vertex(scene_pos)
 
     def _finish_drawing(self):
         """Завершает процесс рисования объекта"""
         name, ok = QInputDialog.getText(self.main_window, "Название объекта",
                                         "Введите название объекта:", QLineEdit.Normal)
         if ok and name:
-            # Создаем новый объект
             new_object = Object(
                 id=None,
                 image_id=self._get_current_image_id(),
@@ -92,11 +116,11 @@ class ObjectManager:
                 coordinates=self.temp_coordinates
             )
 
-            # Сохраняем объект в базу данных
             self._save_object(new_object)
-
-            # Обновляем отображение
             self._update_display()
+
+        # Очищаем временные элементы
+        self.temp_drawing.clear_temp_items()
 
         # Сбрасываем состояние рисования
         self.is_drawing = False

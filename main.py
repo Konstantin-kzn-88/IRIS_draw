@@ -1,49 +1,29 @@
 # main.py
 import sys
 import os
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                               QMenuBar, QMenu, QGraphicsView, QGraphicsScene,
-                               QFileDialog, QGraphicsLineItem)
-from PySide6.QtGui import QAction, QPixmap, QPainter
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QMenuBar, QMenu, QGraphicsView, QGraphicsScene,
+    QFileDialog, QGraphicsLineItem, QInputDialog,
+    QGraphicsPixmapItem, QDialog, QSplitter,
+    QMessageBox, QHeaderView
+)
+from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor
+from PySide6.QtCore import Qt, QPointF, QLineF, QEvent
 
 from database_handler import DatabaseHandler
-from PySide6.QtWidgets import QInputDialog
-from PySide6.QtWidgets import QGraphicsPixmapItem
-
-
-from PySide6.QtCore import Qt, QPointF, QLineF
-from PySide6.QtGui import QPen, QColor
-from PySide6.QtWidgets import QDialog
-
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from iris_db.models import Object, ObjectType
-
-from PySide6.QtWidgets import QSplitter, QTableWidget, QTableWidgetItem
-from iris_db.database import DatabaseManager
-
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget,
-                              QTableWidgetItem, QPushButton, QHeaderView)
-from iris_db.database import DatabaseManager
-from object_manager import ObjectManager
-
 from plan_dialog import SelectPlanDialog
 from object_table import ObjectTableWidget
 from object_items import create_object_item
-
-from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QGraphicsView
-from PySide6.QtWidgets import  QMenu
-
-
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QSplitter,
-                              QMessageBox, QGraphicsPixmapItem)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QPixmap
 from object_manager import ObjectManager
+from temp_drawing import TempDrawingManager
 from iris_db.models import ObjectType
+from iris_db.database import DatabaseManager
 
 
 class ScaleGraphicsView(QGraphicsView):
+    """Класс представления с поддержкой масштабирования и рисования"""
+
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
         self.scale_mode = False
@@ -54,15 +34,13 @@ class ScaleGraphicsView(QGraphicsView):
 
         # Включаем отслеживание мыши
         self.setMouseTracking(True)
-
-        # Добавляем флаг для режима рисования
         self.drawing_mode = False
 
         # Параметры масштабирования
-        self.zoom_factor = 1.15  # Коэффициент масштабирования
-        self.min_scale = 0.1  # Минимальный масштаб
-        self.max_scale = 10.0  # Максимальный масштаб
-        self.current_scale = 1.0  # Текущий масштаб
+        self.zoom_factor = 1.15
+        self.min_scale = 0.1
+        self.max_scale = 10.0
+        self.current_scale = 1.0
 
         # Параметры перетаскивания
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
@@ -74,30 +52,27 @@ class ScaleGraphicsView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
 
         # Включаем сглаживание
-        self.setRenderHints(QPainter.RenderHint.Antialiasing |
-                            QPainter.RenderHint.SmoothPixmapTransform)
+        self.setRenderHints(
+            QPainter.RenderHint.Antialiasing |
+            QPainter.RenderHint.SmoothPixmapTransform
+        )
 
     def wheelEvent(self, event):
-        """Обработка события прокрутки колесика мыши"""
+        """Обработка прокрутки колеса мыши для масштабирования"""
         if event.angleDelta().y() > 0:
-            # Увеличение масштаба
             zoom_in = True
             factor = self.zoom_factor
         else:
-            # Уменьшение масштаба
             zoom_in = False
             factor = 1.0 / self.zoom_factor
 
-        # Проверяем, не выходит ли новый масштаб за пределы
         new_scale = self.current_scale * factor
         if new_scale < self.min_scale or new_scale > self.max_scale:
             return
 
-        # Применяем масштабирование
         self.scale(factor, factor)
         self.current_scale = new_scale
 
-        # Обновляем статусбар с текущим масштабом
         if self.parent:
             scale_percentage = self.current_scale * 100
             self.parent.statusBar().showMessage(
@@ -105,18 +80,9 @@ class ScaleGraphicsView(QGraphicsView):
                 self.parent.time_status
             )
 
-    def mouseDoubleClickEvent(self, event):
-        """Обработка двойного клика мыши"""
-        if self.parent.object_manager.is_drawing:
-            scene_pos = self.mapToScene(event.pos())
-            self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
-            return
-        super().mouseDoubleClickEvent(event)
-
     def mousePressEvent(self, event):
         """Обработка нажатия кнопки мыши"""
         if self.parent.object_manager.is_drawing:
-            # Если активен режим рисования, передаем событие в ObjectManager
             scene_pos = self.mapToScene(event.pos())
             if event.type() == QEvent.MouseButtonDblClick:
                 self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
@@ -124,42 +90,57 @@ class ScaleGraphicsView(QGraphicsView):
                 self.parent.object_manager.handle_mouse_click(scene_pos)
             return
 
-        """Обработка нажатия кнопки мыши"""
         if event.button() == Qt.LeftButton:
             if self.scale_mode:
-                pos = self.mapToScene(event.pos())
-                if len(self.scale_points) < 2:
-                    self.scale_points.append(pos)
-                    if len(self.scale_points) == 2:
-                        if self.temp_line:
-                            self.scene().removeItem(self.temp_line)
-                            self.temp_line = None
-                        if self.scale_line:
-                            self.scene().removeItem(self.scale_line)
-                        line = QLineF(self.scale_points[0], self.scale_points[1])
-                        self.scale_line = QGraphicsLineItem(line)
-                        pixels_length = line.length()
-                        real_distance, ok = QInputDialog.getDouble(
-                            self,
-                            "Введите расстояние",
-                            "Укажите реальное расстояние в метрах:",
-                            1.0, 0.1, 10000.0, 2
-                        )
-                        if ok:
-                            scale = real_distance / pixels_length
-                            self.parent.statusBar().showMessage(
-                                f"Масштаб: 1 пиксель = {scale:.3f} метров"
-                            )
-                            self.parent.scale_for_plan = scale
-                        self.scale_mode = False
-                        self.setCursor(Qt.ArrowCursor)
-                        self.scale_points.clear()
+                self._handle_scale_mode_click(event)
             else:
-                # Включаем режим перетаскивания
-                self.panning = True
-                self.last_mouse_pos = event.pos()
-                self.setCursor(Qt.ClosedHandCursor)
+                self._handle_pan_mode_click(event)
+
         super().mousePressEvent(event)
+
+    def _handle_scale_mode_click(self, event):
+        """Обработка клика в режиме масштабирования"""
+        pos = self.mapToScene(event.pos())
+        if len(self.scale_points) < 2:
+            self.scale_points.append(pos)
+            if len(self.scale_points) == 2:
+                self._finish_scale_measurement()
+
+    def _handle_pan_mode_click(self, event):
+        """Обработка клика в режиме перемещения"""
+        self.panning = True
+        self.last_mouse_pos = event.pos()
+        self.setCursor(Qt.ClosedHandCursor)
+
+    def _finish_scale_measurement(self):
+        """Завершение измерения масштаба"""
+        if self.temp_line:
+            self.scene().removeItem(self.temp_line)
+            self.temp_line = None
+        if self.scale_line:
+            self.scene().removeItem(self.scale_line)
+
+        line = QLineF(self.scale_points[0], self.scale_points[1])
+        self.scale_line = QGraphicsLineItem(line)
+        pixels_length = line.length()
+
+        real_distance, ok = QInputDialog.getDouble(
+            self,
+            "Введите расстояние",
+            "Укажите реальное расстояние в метрах:",
+            1.0, 0.1, 10000.0, 2
+        )
+
+        if ok:
+            scale = real_distance / pixels_length
+            self.parent.statusBar().showMessage(
+                f"Масштаб: 1 пиксель = {scale:.3f} метров"
+            )
+            self.parent.scale_for_plan = scale
+
+        self.scale_mode = False
+        self.setCursor(Qt.ArrowCursor)
+        self.scale_points.clear()
 
     def mouseReleaseEvent(self, event):
         """Обработка отпускания кнопки мыши"""
@@ -170,121 +151,245 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         """Обработка движения мыши"""
-        if self.scale_mode and len(self.scale_points) == 1:
-            current_pos = self.mapToScene(event.pos())
-            if self.temp_line:
-                self.scene().removeItem(self.temp_line)
-            line = QLineF(self.scale_points[0], current_pos)
-            self.temp_line = QGraphicsLineItem(line)
-            pen = QPen(QColor('blue'))
-            pen.setStyle(Qt.DashLine)
-            pen.setWidth(5)
-            self.temp_line.setPen(pen)
-            self.scene().addItem(self.temp_line)
-            length_pixels = line.length()
-            self.parent.statusBar().showMessage(f"Длина: {length_pixels:.1f} пикселей")
+        if self.parent.object_manager.is_drawing:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.object_manager.handle_mouse_move(scene_pos)
+        elif self.scale_mode and len(self.scale_points) == 1:
+            self._handle_scale_mode_move(event)
         elif self.panning and self.last_mouse_pos is not None:
-            # Вычисляем разницу в координатах
-            delta = event.pos() - self.last_mouse_pos
-            self.last_mouse_pos = event.pos()
-
-            # Прокручиваем область просмотра
-            self.horizontalScrollBar().setValue(
-                self.horizontalScrollBar().value() - delta.x())
-            self.verticalScrollBar().setValue(
-                self.verticalScrollBar().value() - delta.y())
+            self._handle_pan_mode_move(event)
 
         super().mouseMoveEvent(event)
 
+    def _handle_scale_mode_move(self, event):
+        """Обработка движения мыши в режиме масштабирования"""
+        current_pos = self.mapToScene(event.pos())
+        if self.temp_line:
+            self.scene().removeItem(self.temp_line)
+
+        line = QLineF(self.scale_points[0], current_pos)
+        self.temp_line = QGraphicsLineItem(line)
+        pen = QPen(QColor('blue'))
+        pen.setStyle(Qt.DashLine)
+        pen.setWidth(5)
+        self.temp_line.setPen(pen)
+        self.scene().addItem(self.temp_line)
+
+        length_pixels = line.length()
+        self.parent.statusBar().showMessage(
+            f"Длина: {length_pixels:.1f} пикселей"
+        )
+
+    def _handle_pan_mode_move(self, event):
+        """Обработка движения мыши в режиме перемещения"""
+        delta = event.pos() - self.last_mouse_pos
+        self.last_mouse_pos = event.pos()
+
+        self.horizontalScrollBar().setValue(
+            self.horizontalScrollBar().value() - delta.x())
+        self.verticalScrollBar().setValue(
+            self.verticalScrollBar().value() - delta.y())
+
+    def mouseDoubleClickEvent(self, event):
+        """Обработка двойного клика мыши"""
+        if self.parent.object_manager.is_drawing:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
+            return
+        super().mouseDoubleClickEvent(event)
+
 
 class MainWindow(QMainWindow):
+    """Главное окно приложения"""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Моё приложение")
         self.setMinimumSize(800, 600)
 
-        # Добавляем атрибут для хранения ID текущего изображения
+        # Инициализация базовых атрибутов
         self.current_image_id = None
-
-        # Инициализируем менеджер объектов
-        self.object_manager = ObjectManager(self)
-
-        # Dictionary для хранения объектов
-        self.object_items = {}
-
-        # Мастаб
         self.scale_mode = False
         self.scale_points = []
         self.scale_line = None
         self.scale_for_plan = None
         self.temp_line = None
-        # Обязательно включаем отслеживание мыши для главного окна
-        self.setMouseTracking(True)
-
-        # Создаем статус бар
-        self.statusBar()
         self.time_status = 10000
+        self.object_items = {}
 
-        # Создаем меню
+        # Создание основных компонентов интерфейса
+        self._create_central_widget()
+        self._setup_graphics_view()
+        self._setup_object_table()
+
+        # Инициализация менеджеров
+        self.object_manager = ObjectManager(self)
+        self.db_handler = DatabaseHandler(self)
+
+        # Создание меню
         self.create_menu()
 
-        # Создаем центральный виджет и слой
+    def _create_central_widget(self):
+        """Создание центрального виджета и компоновка элементов"""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
-        # Создаем разделитель для view и таблицы
-        splitter = QSplitter(Qt.Vertical)
+        # Создание разделителя для view и таблицы
+        self.splitter = QSplitter(Qt.Vertical)
 
-        # Задаем минимальные размеры для компонентов
-        view_container = QWidget()
-        view_layout = QVBoxLayout(view_container)
-        view_layout.setContentsMargins(0, 0, 0, 0)
+        # Создание контейнеров для view и таблицы
+        self.view_container = QWidget()
+        self.view_layout = QVBoxLayout(self.view_container)
+        self.view_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Создаем QGraphicsView и QGraphicsScene
+        self.table_container = QWidget()
+        self.table_layout = QVBoxLayout(self.table_container)
+        self.table_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Добавление контейнеров в разделитель
+        self.splitter.addWidget(self.view_container)
+        self.splitter.addWidget(self.table_container)
+
+        # Установка начальных размеров (70% для плана, 30% для таблицы)
+        self.splitter.setSizes([700, 300])
+
+        # Установка минимальных размеров
+        self.view_container.setMinimumHeight(400)
+        self.table_container.setMinimumHeight(200)
+
+        # Добавление разделителя в главный layout
+        layout.addWidget(self.splitter)
+
+    def _setup_graphics_view(self):
+        """Настройка графической сцены и представления"""
         self.scene = QGraphicsScene()
         self.view = ScaleGraphicsView(self.scene, self)
-        view_layout.addWidget(self.view)
 
-        # Создаем контейнер для таблицы
-        table_container = QWidget()
-        table_layout = QVBoxLayout(table_container)
-        table_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Создаем таблицу объектов
-        self.object_table = ObjectTableWidget()
-        self.object_table.itemSelectionChanged.connect(self.highlight_selected_object)
-        table_layout.addWidget(self.object_table)
-
-        # Добавляем виджеты в сплиттер
-        splitter.addWidget(view_container)
-        splitter.addWidget(table_container)
-
-        # Устанавливаем начальные размеры сплиттера (70% для плана, 30% для таблицы)
-        splitter.setSizes([700, 300])
-
-        # Устанавливаем минимальные размеры для компонентов
-        view_container.setMinimumHeight(400)  # Минимальная высота для плана
-        table_container.setMinimumHeight(200)  # Минимальная высота для таблицы
-
-        # Добавляем разделитель на слой
-        layout.addWidget(splitter)
-
-        # Настраиваем QGraphicsView
-        self.view.setRenderHints(QPainter.RenderHint.Antialiasing |
-                                 QPainter.RenderHint.SmoothPixmapTransform)
+        # Настройка параметров отображения
+        self.view.setRenderHints(
+            QPainter.RenderHint.Antialiasing |
+            QPainter.RenderHint.SmoothPixmapTransform
+        )
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.view.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
 
-        # Инициализируем обработчик базы данных
-        self.db_handler = DatabaseHandler(self)
+        # Добавление view в контейнер
+        self.view_layout.addWidget(self.view)
 
-        # Добавляем атрибут для хранения ID текущего изображения
-        self.current_image_id = None
+    def _setup_object_table(self):
+        """Настройка таблицы объектов"""
+        self.object_table = ObjectTableWidget()
+        self.object_table.itemSelectionChanged.connect(self.highlight_selected_object)
+        self.table_layout.addWidget(self.object_table)
 
-        # Инициализируем менеджер объектов
-        self.object_manager = ObjectManager(self)
+    def resizeEvent(self, event):
+        """Обработчик изменения размера окна"""
+        super().resizeEvent(event)
+        if not self.scene.items():
+            return
+        self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+    def create_menu(self):
+        """Создание главного меню приложения"""
+        menubar = self.menuBar()
+
+        # Меню "Файл"
+        file_menu = menubar.addMenu("Файл")
+        self._create_database_menu(file_menu)
+
+        # Меню "План"
+        plan_menu = menubar.addMenu("План")
+        self._create_plan_menu(plan_menu)
+
+        # Меню "Рисовать"
+        draw_menu = menubar.addMenu("Рисовать")
+        self._create_draw_menu(draw_menu)
+
+    def _create_database_menu(self, file_menu):
+        """Создание подменю для работы с базой данных"""
+        database_menu = QMenu("База данных", self)
+        file_menu.addMenu(database_menu)
+
+        # Создание действий для работы с базой данных
+        create_action = QAction("Создать", self)
+        connect_action = QAction("Подключиться", self)
+        vacuum_action = QAction("Оптимизировать (VACUUM)", self)
+
+        # Установка идентификаторов
+        create_action.setObjectName("create_action")
+        connect_action.setObjectName("connect_action")
+        vacuum_action.setObjectName("vacuum_action")
+
+        # Добавление действий в меню
+        database_menu.addAction(create_action)
+        database_menu.addAction(connect_action)
+        database_menu.addAction(vacuum_action)
+
+        # Привязка обработчиков
+        create_action.triggered.connect(self._create_database)
+        connect_action.triggered.connect(self._connect_database)
+        vacuum_action.triggered.connect(self._vacuum_database)
+
+    def _create_plan_menu(self, plan_menu):
+        """Создание подменю для работы с планом"""
+        gen_plan_menu = QMenu("Ген.план", self)
+        plan_menu.addMenu(gen_plan_menu)
+
+        # Добавление действия для измерения масштаба
+        scale_action = QAction("Измерить масштаб", self)
+        scale_action.triggered.connect(self.toggle_scale_mode)
+        plan_menu.addAction(scale_action)
+
+        # Создание действий для работы с планом
+        actions = {
+            "add": ("Добавить", self.add_plan),
+            "select": ("Выбрать", self.select_plan),
+            "replace": ("Заменить", None),
+            "save": ("Сохранить", None),
+            "clear": ("Очистить", None),
+            "delete": ("Удалить план с объектами", None)
+        }
+
+        # Добавление действий в меню
+        for action_id, (title, handler) in actions.items():
+            action = QAction(title, self)
+            if handler:
+                action.triggered.connect(handler)
+            gen_plan_menu.addAction(action)
+
+    def _create_draw_menu(self, draw_menu):
+        """Создание подменю для рисования"""
+        draw_submenu = QMenu("Рисовать", self)
+        draw_menu.addMenu(draw_submenu)
+
+        # Создание действий для рисования
+        draw_actions = {
+            "all": "Все объекты",
+            "one": "Один объект",
+            "risk": "Риск"
+        }
+
+        for action_id, title in draw_actions.items():
+            action = QAction(title, self)
+            draw_submenu.addAction(action)
+
+        # Создание подменю для объектов
+        objects_menu = QMenu("Объекты", self)
+        draw_menu.addMenu(objects_menu)
+
+        # Создание действий для разных типов объектов
+        object_actions = {
+            ObjectType.POINT: "Точечный объект",
+            ObjectType.LINEAR: "Линейный объект",
+            ObjectType.STATIONARY: "Стационарный объект"
+        }
+
+        for obj_type, title in object_actions.items():
+            action = QAction(title, self)
+            action.triggered.connect(lambda checked, t=obj_type: self.start_drawing_object(t))
+            objects_menu.addAction(action)
 
     def _create_database(self):
         """Обработчик создания новой базы данных"""
@@ -299,143 +404,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Подключение к базе данных выполнено успешно", self.time_status)
         else:
             self.statusBar().showMessage("Ошибка при подключении к базе данных", self.time_status)
-
-
-    def load_plan(self, plan_id):
-        """Загружает выбранный план из базы данных"""
-        try:
-            with DatabaseManager(self.db_handler.current_db_path) as db:
-                # Получаем данные изображения
-                image_data = db.images.get_image_data(plan_id)
-                if image_data:
-                    # Устанавливаем текущий ID изображения
-                    self.current_image_id = plan_id
-
-                    # Загружаем изображение на сцену
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(image_data)
-
-                    # Очищаем сцену и добавляем новое изображение
-                    self.scene.clear()
-                    self.scene.addPixmap(pixmap)
-
-                    # Масштабируем вид
-                    self.view.fitInView(
-                        self.scene.sceneRect(),
-                        Qt.AspectRatioMode.KeepAspectRatio
-                    )
-
-                    # Загружаем объекты в таблицу
-                    self.load_objects_from_image(plan_id)
-
-                    self.statusBar().showMessage("План успешно загружен", 3000)
-                else:
-                    self.statusBar().showMessage("План не найден", 3000)
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке плана: {str(e)}", 3000)
-            print(f"Подробности ошибки: {e}")  # Для отладки
-
-    def create_menu(self):
-        # Создаем строку меню
-        menubar = self.menuBar()
-
-        # Меню "Файл"
-        file_menu = menubar.addMenu("Файл")
-        database_menu = QMenu("База данных", self)
-        file_menu.addMenu(database_menu)
-
-        # Подменю "База данных"
-        create_action = QAction("Создать", self)
-        create_action.setObjectName("create_action")
-        connect_action = QAction("Подключиться", self)
-        connect_action.setObjectName("connect_action")
-        database_menu.addAction(create_action)
-        database_menu.addAction(connect_action)
-
-        # Привязываем действия для работы с базой данных
-        create_action.triggered.connect(self._create_database)
-        connect_action.triggered.connect(self._connect_database)
-
-        # Меню "План"
-        plan_menu = menubar.addMenu("План")
-        gen_plan_menu = QMenu("Ген.план", self)
-        plan_menu.addMenu(gen_plan_menu)
-        # Добавляем действие для измерения масштаба в меню
-        scale_action = QAction("Измерить масштаб", self)
-        scale_action.triggered.connect(self.toggle_scale_mode)
-        plan_menu.addAction(scale_action)
-
-        # Подменю "Ген.план"
-        add_action = QAction("Добавить", self)
-        select_action = QAction("Выбрать", self)  # Добавляем новое действие
-        replace_action = QAction("Заменить", self)
-        save_action = QAction("Сохранить", self)
-        clear_action = QAction("Очистить", self)
-        delete_action = QAction("Удалить план с объектами", self)
-
-        gen_plan_menu.addAction(add_action)
-        gen_plan_menu.addAction(select_action)  # Добавляем в меню
-        gen_plan_menu.addAction(replace_action)
-        gen_plan_menu.addAction(save_action)
-        gen_plan_menu.addAction(clear_action)
-        gen_plan_menu.addAction(delete_action)
-
-        # Привязываем действие к кнопке "Добавить"
-        add_action.triggered.connect(self.add_plan)
-        # Привязываем действия к кнопке "Выбрать"
-        add_action.triggered.connect(self.add_plan)
-        select_action.triggered.connect(self.select_plan)  # Привязываем обработчик
-
-
-        # Меню "Рисовать"
-        draw_menu = menubar.addMenu("Рисовать")
-        draw_submenu = QMenu("Рисовать", self)
-        draw_menu.addMenu(draw_submenu)
-
-        # Подменю "Рисовать"
-        all_objects_action = QAction("Все объекты", self)
-        one_object_action = QAction("Один объект", self)
-        risk_action = QAction("Риск", self)
-
-        draw_submenu.addAction(all_objects_action)
-        draw_submenu.addAction(one_object_action)
-        draw_submenu.addAction(risk_action)
-
-        # В подменю "База данных" добавляем действие для VACUUM
-        vacuum_action = QAction("Оптимизировать (VACUUM)", self)
-        vacuum_action.setObjectName("vacuum_action")
-        database_menu.addAction(vacuum_action)
-        vacuum_action.triggered.connect(self._vacuum_database)
-
-        # Добавляем подменю для создания объектов
-        objects_menu = QMenu("Объекты", self)
-        draw_menu.addMenu(objects_menu)
-
-        # Действия для создания разных типов объектов
-        point_action = QAction("Точечный объект", self)
-        linear_action = QAction("Линейный объект", self)
-        stationary_action = QAction("Стационарный объект", self)
-
-        objects_menu.addAction(point_action)
-        objects_menu.addAction(linear_action)
-        objects_menu.addAction(stationary_action)
-
-        # Привязываем обработчики
-        point_action.triggered.connect(lambda: self.start_drawing_object(ObjectType.POINT))
-        linear_action.triggered.connect(lambda: self.start_drawing_object(ObjectType.LINEAR))
-        stationary_action.triggered.connect(lambda: self.start_drawing_object(ObjectType.STATIONARY))
-
-    def select_plan(self):
-        """Открывает диалог выбора плана из базы данных"""
-        if not self.db_handler.current_db_path:
-            self.statusBar().showMessage("Сначала подключитесь к базе данных", 3000)
-            return
-
-        dialog = SelectPlanDialog(self.db_handler.current_db_path, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            plan_id = dialog.get_selected_plan_id()
-            if plan_id:
-                self.load_plan(plan_id)
 
     def _vacuum_database(self):
         """Обработчик оптимизации базы данных"""
@@ -453,8 +421,11 @@ class MainWindow(QMainWindow):
     def toggle_scale_mode(self):
         """Включает/выключает режим измерения масштаба"""
         if self.is_scene_empty():
-            self.statusBar().showMessage("План не определен. Подключитесь к базе данных. Выберете план.")
+            self.statusBar().showMessage(
+                "План не определен. Подключитесь к базе данных. Выберете план."
+            )
             return
+
         self.view.scale_mode = not self.view.scale_mode
         if self.view.scale_mode:
             self.view.setCursor(Qt.CrossCursor)
@@ -470,16 +441,14 @@ class MainWindow(QMainWindow):
             self.view.scale_points.clear()
 
     def is_scene_empty(self):
-        # Проверяем наличие элементов на сцене
+        """Проверяет наличие плана на сцене"""
         if not self.scene.items():
             return True
-        # Проверяем наличие изображений среди элементов
         pixmap_items = [item for item in self.scene.items() if isinstance(item, QGraphicsPixmapItem)]
         return len(pixmap_items) == 0
 
     def add_plan(self):
-        """Функция добавления плана в базу данных и отображения на сцене"""
-        # Открываем диалог выбора файла
+        """Добавление нового плана в базу данных"""
         plan_path, _ = QFileDialog.getOpenFileName(
             self,
             "Выбрать план",
@@ -489,27 +458,18 @@ class MainWindow(QMainWindow):
 
         if plan_path:
             try:
-                # Читаем файл в бинарном режиме
                 with open(plan_path, 'rb') as file:
                     image_data = file.read()
 
-                # Получаем имя файла без пути
                 plan_name = os.path.basename(plan_path)
-
-                # Сохраняем в базу данных
                 image_id = self.db_handler.save_plan(plan_name, image_data, plan_path)
 
                 if image_id:
-                    print('image_id',image_id)
-                    # Загружаем изображение на сцену
                     pixmap = QPixmap()
                     pixmap.loadFromData(image_data)
 
-                    # Очищаем сцену и добавляем новое изображение
                     self.scene.clear()
                     self.scene.addPixmap(pixmap)
-
-                    # Масштабируем вид, чтобы изображение поместилось
                     self.view.fitInView(
                         self.scene.sceneRect(),
                         Qt.AspectRatioMode.KeepAspectRatio
@@ -519,54 +479,71 @@ class MainWindow(QMainWindow):
                         f"План '{plan_name}' успешно добавлен",
                         3000
                     )
+
                     if image_id:
-                        # После успешной загрузки изображения
-                        self.load_objects_from_image(image_id)  # Загружаем объекты в таблицу
+                        self.load_objects_from_image(image_id)
+
             except Exception as e:
                 self.statusBar().showMessage(
                     f"Ошибка при добавлении плана: {str(e)}",
                     3000
                 )
 
-
-    def load_image(self, image_path):
-        """Метод для загрузки изображения"""
-        pixmap = QPixmap(image_path)
-        if not pixmap.isNull():
-            self.scene.clear()
-            self.scene.addPixmap(pixmap)
-            self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
-
-    def resizeEvent(self, event):
-        """Обработчик изменения размера окна"""
-        super().resizeEvent(event)
-        if not self.scene.items():
+    def select_plan(self):
+        """Выбор существующего плана из базы данных"""
+        if not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Сначала подключитесь к базе данных", 3000)
             return
-        self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+        dialog = SelectPlanDialog(self.db_handler.current_db_path, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            plan_id = dialog.get_selected_plan_id()
+            if plan_id:
+                self.load_plan(plan_id)
+
+    def load_plan(self, plan_id):
+        """Загрузка плана из базы данных"""
+        try:
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                image_data = db.images.get_image_data(plan_id)
+                if image_data:
+                    self.current_image_id = plan_id
+
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(image_data)
+
+                    self.scene.clear()
+                    self.scene.addPixmap(pixmap)
+                    self.view.fitInView(
+                        self.scene.sceneRect(),
+                        Qt.AspectRatioMode.KeepAspectRatio
+                    )
+
+                    self.load_objects_from_image(plan_id)
+                    self.statusBar().showMessage("План успешно загружен", 3000)
+                else:
+                    self.statusBar().showMessage("План не найден", 3000)
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при загрузке плана: {str(e)}", 3000)
+            print(f"Подробности ошибки: {e}")
 
     def load_objects_from_image(self, image_id):
-        """Загружает объекты изображения в таблицу и создает их графические представления"""
+        """Загрузка объектов изображения в таблицу и создание их графических представлений"""
         db = None
         try:
-            # Очищаем существующие объекты из таблицы
             self.object_table.clear_table()
 
-            # Очищаем существующие графические элементы
             for item in self.object_items.values():
                 if item:
                     item.cleanup()
             self.object_items.clear()
 
-            # Получаем объекты из базы данных
             db = DatabaseManager(self.db_handler.current_db_path)
             objects = db.objects.get_by_image_id(image_id)
 
-            # Создаем и сохраняем новые объекты
             for obj in objects:
-                # Добавляем в таблицу
                 self.object_table.add_object(obj)
 
-                # Создаем графический элемент (скрытый по умолчанию)
                 object_item = create_object_item(obj, self.scene)
                 if object_item:
                     self.object_items[obj.id] = object_item
@@ -579,18 +556,15 @@ class MainWindow(QMainWindow):
                 db.close()
 
     def highlight_selected_object(self):
-        """Подсвечивает выбранный объект на плане"""
+        """Подсветка выбранного объекта на плане"""
         try:
-            # Скрываем все объекты
             for item in self.object_items.values():
                 if item and hasattr(item, 'set_visible'):
                     item.set_visible(False)
                     item.highlight(False)
 
-            # Получаем ID выбранного объекта
             selected_id = self.object_table.get_selected_object_id()
             if selected_id is not None and selected_id in self.object_items:
-                # Показываем и подсвечиваем только выбранный объект
                 selected_item = self.object_items[selected_id]
                 if selected_item:
                     selected_item.set_visible(True)
@@ -600,23 +574,91 @@ class MainWindow(QMainWindow):
             print(f"Подробности ошибки подсветки: {e}")
 
     def is_plan_loaded(self) -> bool:
-        """Проверяет, загружен ли план фактически"""
+        """Проверка загрузки плана"""
         if not self.current_image_id:
             return False
         return any(isinstance(item, QGraphicsPixmapItem) for item in self.scene.items())
 
-
-
     def start_drawing_object(self, object_type: ObjectType):
-        """Начинает процесс рисования нового объекта"""
+        """Начало процесса рисования нового объекта"""
         if not self.is_plan_loaded():
             QMessageBox.warning(self, "Предупреждение",
-                              "Сначала выберите план")
+                                "Сначала выберите план")
             return
         self.object_manager.start_drawing_object(object_type)
 
+    def load_image(self, image_path):
+        """
+        Загрузка изображения из файла
+
+        Args:
+            image_path (str): Путь к файлу изображения
+        """
+        pixmap = QPixmap(image_path)
+        if not pixmap.isNull():
+            self.scene.clear()
+            self.scene.addPixmap(pixmap)
+            self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _get_selected_object(self):
+        """
+        Получение текущего выбранного объекта
+
+        Returns:
+            tuple: (id объекта, объект в таблице) или (None, None) если ничего не выбрано
+        """
+        current_row = self.object_table.currentRow()
+        if current_row >= 0:
+            id_item = self.object_table.item(current_row, 0)
+            if id_item and id_item.text():
+                return int(id_item.text()), self.object_table.item(current_row, 1)
+        return None, None
+
+    def update_status(self, message: str, timeout: int = 3000):
+        """
+        Обновление статусной строки
+
+        Args:
+            message (str): Текст сообщения
+            timeout (int): Время отображения в миллисекундах
+        """
+        self.statusBar().showMessage(message, timeout)
+
+    def closeEvent(self, event):
+        """
+        Обработчик закрытия приложения
+
+        Args:
+            event: Событие закрытия
+        """
+        try:
+            if self.db_handler:
+                self.db_handler.close()
+            event.accept()
+        except Exception as e:
+            print(f"Ошибка при закрытии приложения: {e}")
+            event.accept()
+
+
+def main():
+    """Точка входа в приложение"""
+    try:
+        app = QApplication(sys.argv)
+
+        # Установка стиля приложения
+        app.setStyle('Fusion')
+
+        # Создание и отображение главного окна
+        window = MainWindow()
+        window.show()
+
+        # Запуск главного цикла обработки событий
+        sys.exit(app.exec())
+
+    except Exception as e:
+        print(f"Критическая ошибка при запуске приложения: {e}")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    main()
