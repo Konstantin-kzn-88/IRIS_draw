@@ -370,8 +370,7 @@ class MainWindow(QMainWindow):
             "select": ("Выбрать", self.select_plan),
             "replace": ("Заменить", self.replace_plan),
             "save": ("Сохранить", None),
-            "clear": ("Очистить", None),
-            "delete": ("Удалить план с объектами", None)
+            "delete": ("Удалить план с объектами", self.delete_plan)
         }
 
         # Добавление действий в меню
@@ -393,9 +392,16 @@ class MainWindow(QMainWindow):
             "risk": "Риск"
         }
 
+        # Добавляем обработчик для "Один объект"
+        one_object_action = QAction(draw_actions["one"], self)
+        one_object_action.triggered.connect(self.draw_single_object_zones)
+        draw_submenu.addAction(one_object_action)
+
+        # Добавляем остальные пункты меню
         for action_id, title in draw_actions.items():
-            action = QAction(title, self)
-            draw_submenu.addAction(action)
+            if action_id != "one":  # Пропускаем "Один объект", так как уже добавили
+                action = QAction(title, self)
+                draw_submenu.addAction(action)
 
         # Создание подменю для объектов
         objects_menu = QMenu("Объекты", self)
@@ -517,6 +523,97 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(error_msg, 3000)
             print(f"Подробности ошибки: {e}")
             return False
+
+    def delete_plan(self):
+        """
+        Удаляет текущий план и все связанные с ним объекты из базы данных.
+        Очищает графическую сцену и сбрасывает текущее состояние.
+        """
+        if not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Сначала подключитесь к базе данных", 3000)
+            return False
+
+        if not self.current_image_id:
+            self.statusBar().showMessage("План для удаления не выбран", 3000)
+            return False
+
+        # Запрашиваем подтверждение удаления
+        confirmation = QMessageBox.question(
+            self,
+            "Подтверждение удаления",
+            "Вы действительно хотите удалить текущий план?\n"
+            "Все объекты на плане также будут удалены.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if confirmation == QMessageBox.No:
+            return False
+
+        try:
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                # Удаляем план из базы данных
+                # (связанные объекты удалятся автоматически благодаря ON DELETE CASCADE)
+                db.images.delete(self.current_image_id)
+
+            # Очищаем графическую сцену
+            self.scene.clear()
+
+            # Очищаем таблицу объектов
+            self.object_table.clear_table()
+
+            # Очищаем словарь графических элементов
+            for item in self.object_items.values():
+                if item:
+                    item.cleanup()
+            self.object_items.clear()
+
+            # Сбрасываем текущий ID плана
+            self.current_image_id = None
+
+            # Сбрасываем масштаб
+            self.scale_for_plan = None
+
+            self.statusBar().showMessage("План и связанные объекты успешно удалены", 3000)
+            return True
+
+        except Exception as e:
+            error_msg = f"Ошибка при удалении плана: {str(e)}"
+            self.statusBar().showMessage(error_msg, 3000)
+            print(f"Подробности ошибки: {e}")
+            return False
+
+    def draw_single_object_zones(self):
+        """Обработчик для пункта меню 'Рисовать' -> 'Один объект'"""
+        # Получаем тип выбранного объекта
+        selected_id = self.object_table.get_selected_object_id()
+        if not selected_id:
+            self.statusBar().showMessage("Выберите объект в таблице", 3000)
+            return
+
+        try:
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                obj = db.objects.get_by_id(selected_id)
+                if not obj:
+                    raise ValueError("Объект не найден в базе данных")
+
+                if obj.object_type == ObjectType.POINT:
+                    from impact_zones import draw_impact_zones
+                    draw_impact_zones(self)
+                elif obj.object_type == ObjectType.LINEAR:
+                    from linear_impact_zones import draw_linear_impact_zones
+                    draw_linear_impact_zones(self)
+                else:
+                    self.statusBar().showMessage(
+                        "Отрисовка зон не поддерживается для данного типа объекта",
+                        3000
+                    )
+
+        except Exception as e:
+            self.statusBar().showMessage(
+                f"Ошибка при определении типа объекта: {str(e)}",
+                3000
+            )
 
     def toggle_scale_mode(self):
         """Включает/выключает режим измерения масштаба"""
