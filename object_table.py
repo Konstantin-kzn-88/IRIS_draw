@@ -1,5 +1,5 @@
 # object_table.py
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMainWindow
 from PySide6.QtCore import Qt
 from iris_db.models import Object, ObjectType
 
@@ -7,11 +7,10 @@ from iris_db.models import Object, ObjectType
 class ObjectTableWidget(QTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.main_window = parent
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
         self.setup_table()
-
-        # Enable single row selection
-        self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
 
     def setup_table(self):
         # Установка колонок таблицы
@@ -56,11 +55,15 @@ class ObjectTableWidget(QTableWidget):
         """Очищает таблицу"""
         self.setRowCount(0)
 
-    def remove_selected_object(self):
-        """Удаляет выбранный объект из таблицы"""
-        current_row = self.currentRow()
-        if current_row >= 0:
-            self.removeRow(current_row)
+    def show_context_menu(self, position):
+        menu = QMenu()
+        edit_coordinates_action = menu.addAction("Редактировать координаты")
+        action = menu.exec_(self.mapToGlobal(position))
+
+        if action == edit_coordinates_action:
+            object_id = self.get_selected_object_id()
+            if object_id is not None and isinstance(self.main_window, QMainWindow):
+                self.main_window.start_edit_coordinates(object_id)
 
     def get_selected_object_id(self):
         """Возвращает ID выбранного объекта"""

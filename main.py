@@ -12,6 +12,7 @@ from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor
 from PySide6.QtCore import Qt, QPointF, QLineF, QEvent
 
 from database_handler import DatabaseHandler
+from edit_coordinates_manager import EditCoordinatesManager
 from plan_dialog import SelectPlanDialog
 from object_table import ObjectTableWidget
 from object_items import create_object_item
@@ -82,6 +83,14 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mousePressEvent(self, event):
         """Обработка нажатия кнопки мыши"""
+        if self.parent.edit_coordinates_manager.is_editing:
+            scene_pos = self.mapToScene(event.pos())
+            if event.type() == QEvent.MouseButtonDblClick:
+                self.parent.edit_coordinates_manager.handle_mouse_click(scene_pos, double_click=True)
+            else:
+                self.parent.edit_coordinates_manager.handle_mouse_click(scene_pos)
+            return
+
         if self.parent.object_manager.is_drawing:
             scene_pos = self.mapToScene(event.pos())
             if event.type() == QEvent.MouseButtonDblClick:
@@ -151,7 +160,10 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         """Обработка движения мыши"""
-        if self.parent.object_manager.is_drawing:
+        if self.parent.edit_coordinates_manager.is_editing:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.edit_coordinates_manager.handle_mouse_move(scene_pos)
+        elif self.parent.object_manager.is_drawing:
             scene_pos = self.mapToScene(event.pos())
             self.parent.object_manager.handle_mouse_move(scene_pos)
         elif self.scale_mode and len(self.scale_points) == 1:
@@ -192,10 +204,16 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mouseDoubleClickEvent(self, event):
         """Обработка двойного клика мыши"""
+        if self.parent.edit_coordinates_manager.is_editing:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.edit_coordinates_manager.handle_mouse_click(scene_pos, double_click=True)
+            return
+
         if self.parent.object_manager.is_drawing:
             scene_pos = self.mapToScene(event.pos())
             self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
             return
+
         super().mouseDoubleClickEvent(event)
 
 
@@ -222,7 +240,8 @@ class MainWindow(QMainWindow):
         self._setup_graphics_view()
         self._setup_object_table()
 
-        # Инициализация менеджеров
+        # Теперь, когда view создан, инициализируем менеджеры
+        self.edit_coordinates_manager = EditCoordinatesManager(self)
         self.object_manager = ObjectManager(self)
         self.db_handler = DatabaseHandler(self)
 
@@ -280,7 +299,7 @@ class MainWindow(QMainWindow):
 
     def _setup_object_table(self):
         """Настройка таблицы объектов"""
-        self.object_table = ObjectTableWidget()
+        self.object_table = ObjectTableWidget(self)  # self передается как parent
         self.object_table.itemSelectionChanged.connect(self.highlight_selected_object)
         self.table_layout.addWidget(self.object_table)
 
@@ -418,6 +437,8 @@ class MainWindow(QMainWindow):
                 self.time_status
             )
 
+
+
     def toggle_scale_mode(self):
         """Включает/выключает режим измерения масштаба"""
         if self.is_scene_empty():
@@ -439,6 +460,14 @@ class MainWindow(QMainWindow):
                 self.scene.removeItem(self.view.temp_line)
                 self.view.temp_line = None
             self.view.scale_points.clear()
+
+    def start_edit_coordinates(self, object_id: int):
+        """Начинает процесс редактирования координат объекта"""
+        if not self.is_plan_loaded():
+            QMessageBox.warning(self, "Предупреждение",
+                                "Сначала выберите план")
+            return
+        self.edit_coordinates_manager.start_editing_coordinates(object_id)
 
     def is_scene_empty(self):
         """Проверяет наличие плана на сцене"""
@@ -529,31 +558,31 @@ class MainWindow(QMainWindow):
 
     def load_objects_from_image(self, image_id):
         """Загрузка объектов изображения в таблицу и создание их графических представлений"""
-        db = None
         try:
             self.object_table.clear_table()
 
+            # Очищаем старые графические элементы
             for item in self.object_items.values():
                 if item:
                     item.cleanup()
             self.object_items.clear()
 
-            db = DatabaseManager(self.db_handler.current_db_path)
-            objects = db.objects.get_by_image_id(image_id)
+            # Загружаем объекты из базы данных
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                objects = db.objects.get_by_image_id(image_id)
 
-            for obj in objects:
-                self.object_table.add_object(obj)
+                # Добавляем объекты в таблицу и создаем их графические представления
+                for obj in objects:
+                    self.object_table.add_object(obj)
 
-                object_item = create_object_item(obj, self.scene)
-                if object_item:
-                    self.object_items[obj.id] = object_item
+                    object_item = create_object_item(obj, self.scene)
+                    if object_item:
+                        self.object_items[obj.id] = object_item
 
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при загрузке объектов: {str(e)}", 3000)
             print(f"Подробности ошибки загрузки объектов: {e}")
-        finally:
-            if db:
-                db.close()
+
 
     def highlight_selected_object(self):
         """Подсветка выбранного объекта на плане"""
