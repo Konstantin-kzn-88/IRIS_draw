@@ -24,10 +24,23 @@ from iris_db.database import DatabaseManager
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget,
                               QTableWidgetItem, QPushButton, QHeaderView)
 from iris_db.database import DatabaseManager
+from object_manager import ObjectManager
 
 from plan_dialog import SelectPlanDialog
 from object_table import ObjectTableWidget
 from object_items import create_object_item
+
+from PySide6.QtCore import QEvent
+from PySide6.QtWidgets import QGraphicsView
+from PySide6.QtWidgets import  QMenu
+
+
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QSplitter,
+                              QMessageBox, QGraphicsPixmapItem)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QPixmap
+from object_manager import ObjectManager
+from iris_db.models import ObjectType
 
 
 class ScaleGraphicsView(QGraphicsView):
@@ -41,6 +54,9 @@ class ScaleGraphicsView(QGraphicsView):
 
         # Включаем отслеживание мыши
         self.setMouseTracking(True)
+
+        # Добавляем флаг для режима рисования
+        self.drawing_mode = False
 
         # Параметры масштабирования
         self.zoom_factor = 1.15  # Коэффициент масштабирования
@@ -89,7 +105,25 @@ class ScaleGraphicsView(QGraphicsView):
                 self.parent.time_status
             )
 
+    def mouseDoubleClickEvent(self, event):
+        """Обработка двойного клика мыши"""
+        if self.parent.object_manager.is_drawing:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
+            return
+        super().mouseDoubleClickEvent(event)
+
     def mousePressEvent(self, event):
+        """Обработка нажатия кнопки мыши"""
+        if self.parent.object_manager.is_drawing:
+            # Если активен режим рисования, передаем событие в ObjectManager
+            scene_pos = self.mapToScene(event.pos())
+            if event.type() == QEvent.MouseButtonDblClick:
+                self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
+            else:
+                self.parent.object_manager.handle_mouse_click(scene_pos)
+            return
+
         """Обработка нажатия кнопки мыши"""
         if event.button() == Qt.LeftButton:
             if self.scale_mode:
@@ -169,8 +203,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Моё приложение")
         self.setMinimumSize(800, 600)
 
-        # Dictionary to store object items
-        self.object_items = {}  # {object_id: ObjectItem}
+        # Добавляем атрибут для хранения ID текущего изображения
+        self.current_image_id = None
+
+        # Инициализируем менеджер объектов
+        self.object_manager = ObjectManager(self)
+
+        # Dictionary для хранения объектов
+        self.object_items = {}
 
         # Мастаб
         self.scale_mode = False
@@ -240,6 +280,12 @@ class MainWindow(QMainWindow):
         # Инициализируем обработчик базы данных
         self.db_handler = DatabaseHandler(self)
 
+        # Добавляем атрибут для хранения ID текущего изображения
+        self.current_image_id = None
+
+        # Инициализируем менеджер объектов
+        self.object_manager = ObjectManager(self)
+
     def _create_database(self):
         """Обработчик создания новой базы данных"""
         if self.db_handler.create_database():
@@ -253,6 +299,41 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Подключение к базе данных выполнено успешно", self.time_status)
         else:
             self.statusBar().showMessage("Ошибка при подключении к базе данных", self.time_status)
+
+
+    def load_plan(self, plan_id):
+        """Загружает выбранный план из базы данных"""
+        try:
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                # Получаем данные изображения
+                image_data = db.images.get_image_data(plan_id)
+                if image_data:
+                    # Устанавливаем текущий ID изображения
+                    self.current_image_id = plan_id
+
+                    # Загружаем изображение на сцену
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(image_data)
+
+                    # Очищаем сцену и добавляем новое изображение
+                    self.scene.clear()
+                    self.scene.addPixmap(pixmap)
+
+                    # Масштабируем вид
+                    self.view.fitInView(
+                        self.scene.sceneRect(),
+                        Qt.AspectRatioMode.KeepAspectRatio
+                    )
+
+                    # Загружаем объекты в таблицу
+                    self.load_objects_from_image(plan_id)
+
+                    self.statusBar().showMessage("План успешно загружен", 3000)
+                else:
+                    self.statusBar().showMessage("План не найден", 3000)
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при загрузке плана: {str(e)}", 3000)
+            print(f"Подробности ошибки: {e}")  # Для отладки
 
     def create_menu(self):
         # Создаем строку меню
@@ -326,6 +407,23 @@ class MainWindow(QMainWindow):
         database_menu.addAction(vacuum_action)
         vacuum_action.triggered.connect(self._vacuum_database)
 
+        # Добавляем подменю для создания объектов
+        objects_menu = QMenu("Объекты", self)
+        draw_menu.addMenu(objects_menu)
+
+        # Действия для создания разных типов объектов
+        point_action = QAction("Точечный объект", self)
+        linear_action = QAction("Линейный объект", self)
+        stationary_action = QAction("Стационарный объект", self)
+
+        objects_menu.addAction(point_action)
+        objects_menu.addAction(linear_action)
+        objects_menu.addAction(stationary_action)
+
+        # Привязываем обработчики
+        point_action.triggered.connect(lambda: self.start_drawing_object(ObjectType.POINT))
+        linear_action.triggered.connect(lambda: self.start_drawing_object(ObjectType.LINEAR))
+        stationary_action.triggered.connect(lambda: self.start_drawing_object(ObjectType.STATIONARY))
 
     def select_plan(self):
         """Открывает диалог выбора плана из базы данных"""
@@ -338,38 +436,6 @@ class MainWindow(QMainWindow):
             plan_id = dialog.get_selected_plan_id()
             if plan_id:
                 self.load_plan(plan_id)
-
-    def load_plan(self, plan_id):
-        """Загружает выбранный план из базы данных"""
-        try:
-            with DatabaseManager(self.db_handler.current_db_path) as db:
-                # Получаем данные изображения
-                image_data = db.images.get_image_data(plan_id)
-                if image_data:
-                    # Загружаем изображение на сцену
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(image_data)
-
-                    # Очищаем сцену и добавляем новое изображение
-                    self.scene.clear()
-                    self.scene.addPixmap(pixmap)
-
-                    # Масштабируем вид
-                    self.view.fitInView(
-                        self.scene.sceneRect(),
-                        Qt.AspectRatioMode.KeepAspectRatio
-                    )
-
-                    # Загружаем объекты в таблицу
-                    self.load_objects_from_image(plan_id)
-
-                    self.statusBar().showMessage("План успешно загружен", 3000)
-                else:
-                    self.statusBar().showMessage("План не найден", 3000)
-
-        except Exception as e:
-            self.statusBar().showMessage(f"Ошибка при загрузке плана: {str(e)}", 3000)
-
 
     def _vacuum_database(self):
         """Обработчик оптимизации базы данных"""
@@ -480,45 +546,74 @@ class MainWindow(QMainWindow):
 
     def load_objects_from_image(self, image_id):
         """Загружает объекты изображения в таблицу и создает их графические представления"""
+        db = None
         try:
-            with DatabaseManager(self.db_handler.current_db_path) as db:
-                objects = db.objects.get_by_image_id(image_id)
+            # Очищаем существующие объекты из таблицы
+            self.object_table.clear_table()
 
-                # Очищаем существующие объекты
-                self.object_table.clear_table()
+            # Очищаем существующие графические элементы
+            for item in self.object_items.values():
+                if item:
+                    item.cleanup()
+            self.object_items.clear()
 
-                # Удаляем старые графические элементы со сцены
-                for item in self.object_items.values():
-                    for graphics_item in item.items:
-                        self.scene.removeItem(graphics_item)
-                self.object_items.clear()
+            # Получаем объекты из базы данных
+            db = DatabaseManager(self.db_handler.current_db_path)
+            objects = db.objects.get_by_image_id(image_id)
 
-                # Создаем и сохраняем объекты
-                for obj in objects:
-                    # Добавляем в таблицу
-                    self.object_table.add_object(obj)
+            # Создаем и сохраняем новые объекты
+            for obj in objects:
+                # Добавляем в таблицу
+                self.object_table.add_object(obj)
 
-                    # Создаем графический элемент (скрытый по умолчанию)
-                    object_item = create_object_item(obj, self.scene)
+                # Создаем графический элемент (скрытый по умолчанию)
+                object_item = create_object_item(obj, self.scene)
+                if object_item:
                     self.object_items[obj.id] = object_item
 
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при загрузке объектов: {str(e)}", 3000)
+            print(f"Подробности ошибки загрузки объектов: {e}")
+        finally:
+            if db:
+                db.close()
 
     def highlight_selected_object(self):
         """Подсвечивает выбранный объект на плане"""
-        # Скрываем все объекты
-        for item in self.object_items.values():
-            item.set_visible(False)
-            item.highlight(False)
+        try:
+            # Скрываем все объекты
+            for item in self.object_items.values():
+                if item and hasattr(item, 'set_visible'):
+                    item.set_visible(False)
+                    item.highlight(False)
 
-        # Получаем ID выбранного объекта
-        selected_id = self.object_table.get_selected_object_id()
-        if selected_id is not None and selected_id in self.object_items:
-            # Показываем и подсвечиваем только выбранный объект
-            self.object_items[selected_id].set_visible(True)
-            self.object_items[selected_id].highlight(True)
+            # Получаем ID выбранного объекта
+            selected_id = self.object_table.get_selected_object_id()
+            if selected_id is not None and selected_id in self.object_items:
+                # Показываем и подсвечиваем только выбранный объект
+                selected_item = self.object_items[selected_id]
+                if selected_item:
+                    selected_item.set_visible(True)
+                    selected_item.highlight(True)
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при подсветке объекта: {str(e)}", 3000)
+            print(f"Подробности ошибки подсветки: {e}")
 
+    def is_plan_loaded(self) -> bool:
+        """Проверяет, загружен ли план фактически"""
+        if not self.current_image_id:
+            return False
+        return any(isinstance(item, QGraphicsPixmapItem) for item in self.scene.items())
+
+
+
+    def start_drawing_object(self, object_type: ObjectType):
+        """Начинает процесс рисования нового объекта"""
+        if not self.is_plan_loaded():
+            QMessageBox.warning(self, "Предупреждение",
+                              "Сначала выберите план")
+            return
+        self.object_manager.start_drawing_object(object_type)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

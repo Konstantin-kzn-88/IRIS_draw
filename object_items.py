@@ -11,26 +11,52 @@ class BaseObjectItem:
         self.object = obj
         self._is_highlighted = False
         self.items = []
-        # По умолчанию объекты скрыты
+        self.is_valid = True  # Флаг валидности объекта
         self.set_visible(False)
 
     def set_visible(self, visible: bool):
         """Устанавливает видимость объекта"""
-        for item in self.items:
-            item.setVisible(visible)
+        if not self.is_valid:
+            return
+        try:
+            for item in self.items:
+                if item and item.scene():  # Проверяем, что элемент существует и привязан к сцене
+                    item.setVisible(visible)
+        except RuntimeError:
+            self.is_valid = False  # Помечаем объект как недействительный
+            self.items = []  # Очищаем список элементов
 
     def highlight(self, enabled=True):
         """Подсвечивает или снимает подсветку с объекта"""
-        self._is_highlighted = enabled
-        color = QColor('red') if enabled else QColor('blue')
-        width = 3 if enabled else 1
-        for item in self.items:
-            if isinstance(item, (QGraphicsEllipseItem, QGraphicsPathItem)):
-                pen = QPen(color, width)
-                if enabled:
-                    pen.setStyle(Qt.SolidLine)
-                item.setPen(pen)
+        if not self.is_valid:
+            return
+        try:
+            self._is_highlighted = enabled
+            color = QColor('red') if enabled else QColor('blue')
+            width = 3 if enabled else 1
+            for item in self.items:
+                if item and item.scene() and isinstance(item, (QGraphicsEllipseItem, QGraphicsPathItem)):
+                    pen = QPen(color, width)
+                    if enabled:
+                        pen.setStyle(Qt.SolidLine)
+                    item.setPen(pen)
+        except RuntimeError:
+            self.is_valid = False
+            self.items = []
 
+    def cleanup(self):
+        """Очищает графические элементы объекта"""
+        if not self.is_valid:
+            return
+        try:
+            for item in self.items:
+                if item and item.scene():
+                    item.scene().removeItem(item)
+            self.items = []
+            self.is_valid = False
+        except RuntimeError:
+            self.is_valid = False
+            self.items = []
 
 class PointObjectItem(BaseObjectItem):
     """Класс для отображения точечных объектов"""
