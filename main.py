@@ -4,6 +4,9 @@ import sys
 import os
 from pathlib import Path
 
+from PySide6.QtGui import QImage, QPainter
+from PySide6.QtCore import QRectF
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QMenuBar, QMenu, QGraphicsView, QGraphicsScene,
@@ -369,7 +372,8 @@ class MainWindow(QMainWindow):
             "add": ("Добавить", self.add_plan),
             "select": ("Выбрать", self.select_plan),
             "replace": ("Заменить", self.replace_plan),
-            "save": ("Сохранить", None),
+            "clear": ("Очистить", self.clear_plan),  # Добавляем новое действие
+            "save": ("Сохранить", self.save_plan),
             "delete": ("Удалить план с объектами", self.delete_plan)
         }
 
@@ -404,25 +408,9 @@ class MainWindow(QMainWindow):
 
         # Добавляем остальные пункты меню
         for action_id, title in draw_actions.items():
-            if action_id != "one":  # Пропускаем "Один объект", так как уже добавили
+            if action_id not in ["one", "all"]:  # Пропускаем уже добавленные действия
                 action = QAction(title, self)
                 draw_submenu.addAction(action)
-
-        # Создание подменю для объектов
-        objects_menu = QMenu("Объекты", self)
-        draw_menu.addMenu(objects_menu)
-
-        # Создание действий для разных типов объектов
-        object_actions = {
-            ObjectType.POINT: "Точечный объект",
-            ObjectType.LINEAR: "Линейный объект",
-            ObjectType.STATIONARY: "Стационарный объект"
-        }
-
-        for obj_type, title in object_actions.items():
-            action = QAction(title, self)
-            action.triggered.connect(lambda checked, t=obj_type: self.start_drawing_object(t))
-            objects_menu.addAction(action)
 
     def _create_database(self):
         """Обработчик создания новой базы данных"""
@@ -450,6 +438,123 @@ class MainWindow(QMainWindow):
                 "Ошибка при оптимизации базы данных",
                 self.time_status
             )
+
+    def save_plan(self):
+        """
+        Сохраняет текущее содержимое сцены в файл JPG
+        """
+        if self.is_scene_empty():
+            self.statusBar().showMessage(
+                "Нет плана для сохранения",
+                3000
+            )
+            return False
+
+        try:
+            # Открываем диалог выбора файла для сохранения
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить план",
+                "",
+                "Изображения (*.jpg)"
+            )
+
+            if not file_path:
+                return False
+
+            # Добавляем расширение .jpg если его нет
+            if not file_path.lower().endswith('.jpg'):
+                file_path += '.jpg'
+
+            # Создаем изображение из содержимого сцены
+            scene_rect = self.scene.sceneRect()
+            image = QImage(
+                int(scene_rect.width()),
+                int(scene_rect.height()),
+                QImage.Format_RGB32
+            )
+            image.fill(Qt.white)  # Заполняем белым фоном
+
+            # Создаем painter для рисования на изображении
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+
+            # Рендерим содержимое сцены
+            self.scene.render(
+                painter,
+                QRectF(image.rect()),
+                self.scene.sceneRect()
+            )
+            painter.end()
+
+            # Сохраняем изображение
+            if image.save(file_path, 'JPG', 100):  # Качество 100%
+                self.statusBar().showMessage(
+                    f"План успешно сохранен в {file_path}",
+                    3000
+                )
+                return True
+            else:
+                raise Exception("Не удалось сохранить файл")
+
+        except Exception as e:
+            self.statusBar().showMessage(
+                f"Ошибка при сохранении плана: {str(e)}",
+                3000
+            )
+            print(f"Подробности ошибки сохранения: {e}")
+            return False
+
+    def clear_plan(self):
+        """
+        Очищает сцену и перезагружает план из базы данных.
+        Сохраняет объекты и масштаб.
+        """
+        if not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Сначала подключитесь к базе данных", 3000)
+            return False
+
+        if not self.current_image_id:
+            self.statusBar().showMessage("План не выбран", 3000)
+            return False
+
+        try:
+            # Получаем данные изображения из базы
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                image_data = db.images.get_image_data(self.current_image_id)
+                if not image_data:
+                    raise ValueError("План не найден в базе данных")
+
+                # Очищаем сцену
+                self.scene.clear()
+
+                # Загружаем изображение
+                pixmap = QPixmap()
+                if not pixmap.loadFromData(image_data):
+                    raise ValueError("Не удалось загрузить изображение")
+
+                # Добавляем изображение на сцену
+                self.scene.addPixmap(pixmap)
+
+                # Восстанавливаем масштаб отображения
+                self.view.fitInView(
+                    self.scene.sceneRect(),
+                    Qt.AspectRatioMode.KeepAspectRatio
+                )
+
+                # Перезагружаем объекты
+                self.load_objects_from_image(self.current_image_id)
+
+                self.statusBar().showMessage("План успешно очищен", 3000)
+                return True
+
+        except Exception as e:
+            self.statusBar().showMessage(
+                f"Ошибка при очистке плана: {str(e)}",
+                3000
+            )
+            print(f"Подробности ошибки: {e}")
+            return False
 
     def replace_plan(self):
         """
