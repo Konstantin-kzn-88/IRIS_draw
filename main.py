@@ -397,6 +397,11 @@ class MainWindow(QMainWindow):
         one_object_action.triggered.connect(self.draw_single_object_zones)
         draw_submenu.addAction(one_object_action)
 
+        # Добавляем обработчик для "Все объекты"
+        all_objects_action = QAction(draw_actions["all"], self)
+        all_objects_action.triggered.connect(self.draw_all_objects_zones)
+        draw_submenu.addAction(all_objects_action)
+
         # Добавляем остальные пункты меню
         for action_id, title in draw_actions.items():
             if action_id != "one":  # Пропускаем "Один объект", так как уже добавили
@@ -583,6 +588,11 @@ class MainWindow(QMainWindow):
             print(f"Подробности ошибки: {e}")
             return False
 
+    def draw_all_objects_zones(self):
+        """Обработчик для пункта меню 'Рисовать' -> 'Все объекты'"""
+        from all_impact_zones import draw_all_impact_zones
+        draw_all_impact_zones(self)
+
     def draw_single_object_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Один объект'"""
         # Получаем тип выбранного объекта
@@ -603,6 +613,9 @@ class MainWindow(QMainWindow):
                 elif obj.object_type == ObjectType.LINEAR:
                     from linear_impact_zones import draw_linear_impact_zones
                     draw_linear_impact_zones(self)
+                elif obj.object_type == ObjectType.STATIONARY:
+                    from stationary_impact_zones import draw_stationary_impact_zones
+                    draw_stationary_impact_zones(self)
                 else:
                     self.statusBar().showMessage(
                         "Отрисовка зон не поддерживается для данного типа объекта",
@@ -611,7 +624,7 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             self.statusBar().showMessage(
-                f"Ошибка при определении типа объекта: {str(e)}",
+                f"Ошибка при отрисовке зон: {str(e)}",
                 3000
             )
 
