@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtCore import QPointF
 from iris_db.models import Object, Coordinate, ObjectType
 from iris_db.database import DatabaseManager
-from temp_drawing import TempDrawingManager
+from .temp_drawing import TempDrawingManager
 
 
 class ObjectManager:

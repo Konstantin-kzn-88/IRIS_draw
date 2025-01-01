@@ -2,7 +2,7 @@ from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QMessageBox
 from iris_db.models import Object, Coordinate
 from iris_db.database import DatabaseManager
-from temp_drawing import TempDrawingManager
+from .temp_drawing import TempDrawingManager
 
 
 class EditCoordinatesManager:

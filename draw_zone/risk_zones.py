@@ -8,7 +8,7 @@ from shapely.geometry import Point, LineString, Polygon
 from iris_db.models import ObjectType
 from iris_db.database import DatabaseManager
 
-# Используем те же константы, что и в heatmap.py
+# Используем те же константы, что и в example_heatmap.py
 PALETTE = np.array([
     [255, 255, 255, 255], [0, 50, 255, 255], [0, 100, 255, 255],
     [0, 120, 255, 255], [0, 140, 255, 255], [0, 160, 255, 255],

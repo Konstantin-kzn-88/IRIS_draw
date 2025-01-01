@@ -4,26 +4,25 @@ import sys
 import os
 from pathlib import Path
 
-from PySide6.QtGui import QImage, QPainter
+from PySide6.QtGui import QImage
 from PySide6.QtCore import QRectF
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QMenuBar, QMenu, QGraphicsView, QGraphicsScene,
+    QMenu, QGraphicsView, QGraphicsScene,
     QFileDialog, QGraphicsLineItem, QInputDialog,
     QGraphicsPixmapItem, QDialog, QSplitter,
-    QMessageBox, QHeaderView
+    QMessageBox
 )
 from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor
-from PySide6.QtCore import Qt, QPointF, QLineF, QEvent
+from PySide6.QtCore import Qt, QLineF, QEvent
 
-from database_handler import DatabaseHandler
-from edit_coordinates_manager import EditCoordinatesManager
-from plan_dialog import SelectPlanDialog
-from object_table import ObjectTableWidget
-from object_items import create_object_item
-from object_manager import ObjectManager
-from temp_drawing import TempDrawingManager
+from service.database_handler import DatabaseHandler
+from service.edit_coordinates_manager import EditCoordinatesManager
+from service.plan_dialog import SelectPlanDialog
+from service.object_table import ObjectTableWidget
+from service.object_items import create_object_item
+from service.object_manager import ObjectManager
 from iris_db.models import ObjectType
 from iris_db.database import DatabaseManager
 
@@ -710,12 +709,12 @@ class MainWindow(QMainWindow):
 
     def draw_risk_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Риск'"""
-        from risk_zones import draw_risk_zones
+        from draw_zone.risk_zones import draw_risk_zones
         draw_risk_zones(self)
 
     def draw_all_objects_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Все объекты'"""
-        from all_impact_zones import draw_all_impact_zones
+        from draw_zone.all_impact_zones import draw_all_impact_zones
         draw_all_impact_zones(self)
 
     def draw_single_object_zones(self):
@@ -733,13 +732,13 @@ class MainWindow(QMainWindow):
                     raise ValueError("Объект не найден в базе данных")
 
                 if obj.object_type == ObjectType.POINT:
-                    from impact_zones import draw_impact_zones
+                    from draw_zone.impact_zones import draw_impact_zones
                     draw_impact_zones(self)
                 elif obj.object_type == ObjectType.LINEAR:
-                    from linear_impact_zones import draw_linear_impact_zones
+                    from draw_zone.linear_impact_zones import draw_linear_impact_zones
                     draw_linear_impact_zones(self)
                 elif obj.object_type == ObjectType.STATIONARY:
-                    from stationary_impact_zones import draw_stationary_impact_zones
+                    from draw_zone.stationary_impact_zones import draw_stationary_impact_zones
                     draw_stationary_impact_zones(self)
                 else:
                     self.statusBar().showMessage(
