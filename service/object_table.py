@@ -14,11 +14,70 @@ class ObjectTableWidget(QTableWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
         self.setup_table()
+        # Подключаем обработчик изменения ячеек
+        self.itemChanged.connect(self.handle_item_changed)
+        # Флаг для предотвращения рекурсивных вызовов при обновлении
+        self.is_updating = False
+
+    def handle_item_changed(self, item):
+        """Обработка изменения значения в ячейке"""
+        if self.is_updating:
+            return
+
+        try:
+            row = item.row()
+            col = item.column()
+            new_value = item.text()
+            object_id = int(self.item(row, 0).text())
+
+            # Игнорируем изменения в нередактируемых столбцах
+            if col in [0, 2, 9]:  # ID, Тип, Координаты
+                return
+
+            with DatabaseManager(self.main_window.db_handler.current_db_path) as db:
+                obj = db.objects.get_by_id(object_id)
+                if not obj:
+                    raise ValueError("Объект не найден в базе данных")
+
+                if col == 1:  # Название
+                    obj.name = new_value
+                elif 3 <= col <= 8:  # R1-R6
+                    try:
+                        value = float(new_value)
+                        if value < 0:
+                            raise ValueError("Значение не может быть отрицательным")
+                        setattr(obj, f'R{col-2}', value)
+                    except ValueError as e:
+                        QMessageBox.warning(
+                            self,
+                            "Ошибка",
+                            "Введите корректное числовое значение"
+                        )
+                        self.is_updating = True
+                        item.setText(str(getattr(obj, f'R{col-2}')))
+                        self.is_updating = False
+                        return
+
+                # Сохраняем изменения в базе данных
+                db.objects.update(obj)
+                self.main_window.statusBar().showMessage(
+                    "Изменения сохранены",
+                    3000
+                )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Ошибка",
+                f"Не удалось сохранить изменения: {str(e)}"
+            )
+            # Отменяем изменение
+            self.is_updating = True
+            item.setText(str(getattr(obj, f'R{col-2}')))
+            self.is_updating = False
 
     def delete_selected_object(self):
         """Удаляет выбранный объект из таблицы и базы данных"""
-
-        # Получаем ID выбранного объекта
         object_id = self.get_selected_object_id()
         if object_id is None:
             self.main_window.statusBar().showMessage(
@@ -27,7 +86,6 @@ class ObjectTableWidget(QTableWidget):
             )
             return
 
-        # Запрашиваем подтверждение удаления
         confirmation = QMessageBox.question(
             self,
             "Подтверждение удаления",
@@ -40,16 +98,13 @@ class ObjectTableWidget(QTableWidget):
             return
 
         try:
-            # Удаляем объект из базы данных
             with DatabaseManager(self.main_window.db_handler.current_db_path) as db:
                 db.objects.delete(object_id)
 
-            # Удаляем объект из графической сцены
             if object_id in self.main_window.object_items:
                 self.main_window.object_items[object_id].cleanup()
                 del self.main_window.object_items[object_id]
 
-            # Удаляем строку из таблицы
             current_row = self.currentRow()
             self.removeRow(current_row)
 
@@ -89,10 +144,20 @@ class ObjectTableWidget(QTableWidget):
         row = self.rowCount()
         self.insertRow(row)
 
-        # Заполняем ячейки данными объекта
-        self.setItem(row, 0, QTableWidgetItem(str(obj.id or '')))
+        # ID - нередактируемый
+        id_item = QTableWidgetItem(str(obj.id or ''))
+        id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setItem(row, 0, id_item)
+
+        # Название - редактируемое
         self.setItem(row, 1, QTableWidgetItem(obj.name))
-        self.setItem(row, 2, QTableWidgetItem(obj.object_type.value))
+
+        # Тип - нередактируемый
+        type_item = QTableWidgetItem(obj.object_type.value)
+        type_item.setFlags(type_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setItem(row, 2, type_item)
+
+        # R1-R6 - редактируемые
         self.setItem(row, 3, QTableWidgetItem(str(obj.R1)))
         self.setItem(row, 4, QTableWidgetItem(str(obj.R2)))
         self.setItem(row, 5, QTableWidgetItem(str(obj.R3)))
@@ -100,9 +165,11 @@ class ObjectTableWidget(QTableWidget):
         self.setItem(row, 7, QTableWidgetItem(str(obj.R5)))
         self.setItem(row, 8, QTableWidgetItem(str(obj.R6)))
 
-        # Формируем строку координат
+        # Координаты - нередактируемые
         coords_str = '; '.join([f"({c.x:.1f}, {c.y:.1f})" for c in obj.coordinates])
-        self.setItem(row, 9, QTableWidgetItem(coords_str))
+        coords_item = QTableWidgetItem(coords_str)
+        coords_item.setFlags(coords_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.setItem(row, 9, coords_item)
 
     def clear_table(self):
         """Очищает таблицу"""
@@ -111,7 +178,7 @@ class ObjectTableWidget(QTableWidget):
     def show_context_menu(self, position):
         menu = QMenu()
         edit_coordinates_action = menu.addAction("Редактировать координаты")
-        delete_action = menu.addAction("Удалить")  # Добавляем новый пункт меню
+        delete_action = menu.addAction("Удалить")
 
         action = menu.exec_(self.mapToGlobal(position))
 
@@ -119,7 +186,7 @@ class ObjectTableWidget(QTableWidget):
             object_id = self.get_selected_object_id()
             if object_id is not None and isinstance(self.main_window, QMainWindow):
                 self.main_window.start_edit_coordinates(object_id)
-        elif action == delete_action:  # Обработка нового действия
+        elif action == delete_action:
             self.delete_selected_object()
 
     def get_selected_object_id(self):
