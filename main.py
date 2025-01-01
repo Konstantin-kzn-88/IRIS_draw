@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor
 from PySide6.QtCore import Qt, QLineF, QEvent
 
+from measurement_tools import MeasurementTools
 from service.database_handler import DatabaseHandler
 from service.edit_coordinates_manager import EditCoordinatesManager
 from service.plan_dialog import SelectPlanDialog
@@ -88,6 +89,14 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mousePressEvent(self, event):
         """Обработка нажатия кнопки мыши"""
+        if self.parent.measurement_tools.is_measuring:
+            scene_pos = self.mapToScene(event.pos())
+            if event.type() == QEvent.MouseButtonDblClick:
+                self.parent.measurement_tools.handle_mouse_click(scene_pos, double_click=True)
+            else:
+                self.parent.measurement_tools.handle_mouse_click(scene_pos)
+            return
+
         if self.parent.edit_coordinates_manager.is_editing:
             scene_pos = self.mapToScene(event.pos())
             if event.type() == QEvent.MouseButtonDblClick:
@@ -165,7 +174,10 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         """Обработка движения мыши"""
-        if self.parent.edit_coordinates_manager.is_editing:
+        if self.parent.measurement_tools.is_measuring:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.measurement_tools.handle_mouse_move(scene_pos)
+        elif self.parent.edit_coordinates_manager.is_editing:
             scene_pos = self.mapToScene(event.pos())
             self.parent.edit_coordinates_manager.handle_mouse_move(scene_pos)
         elif self.parent.object_manager.is_drawing:
@@ -209,6 +221,11 @@ class ScaleGraphicsView(QGraphicsView):
 
     def mouseDoubleClickEvent(self, event):
         """Обработка двойного клика мыши"""
+        if self.parent.measurement_tools.is_measuring:
+            scene_pos = self.mapToScene(event.pos())
+            self.parent.measurement_tools.handle_mouse_click(scene_pos, double_click=True)
+            return
+
         if self.parent.edit_coordinates_manager.is_editing:
             scene_pos = self.mapToScene(event.pos())
             self.parent.edit_coordinates_manager.handle_mouse_click(scene_pos, double_click=True)
@@ -249,6 +266,7 @@ class MainWindow(QMainWindow):
         self.edit_coordinates_manager = EditCoordinatesManager(self)
         self.object_manager = ObjectManager(self)
         self.db_handler = DatabaseHandler(self)
+        self.measurement_tools = MeasurementTools(self)
 
         # Создание меню
         self.create_menu()
@@ -308,6 +326,15 @@ class MainWindow(QMainWindow):
         self.object_table.itemSelectionChanged.connect(self.highlight_selected_object)
         self.table_layout.addWidget(self.object_table)
 
+    def _create_measurement_menu(self, menubar):
+        """Создание меню для инструментов измерения"""
+
+        length_action = menubar.addAction("Длина")
+        length_action.triggered.connect(self.measurement_tools.start_length_measurement)
+
+        area_action = menubar.addAction("Площадь")
+        area_action.triggered.connect(self.measurement_tools.start_area_measurement)
+
     def resizeEvent(self, event):
         """Обработчик изменения размера окна"""
         super().resizeEvent(event)
@@ -330,6 +357,9 @@ class MainWindow(QMainWindow):
         # Меню "Рисовать"
         draw_menu = menubar.addMenu("Рисовать")
         self._create_draw_menu(draw_menu)
+
+        measurement_menu = menubar.addMenu("Измерение")
+        self._create_measurement_menu(measurement_menu)
 
     def _create_database_menu(self, file_menu):
         """Создание подменю для работы с базой данных"""
