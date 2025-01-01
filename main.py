@@ -391,8 +391,8 @@ class MainWindow(QMainWindow):
 
         # Создание действий для рисования
         draw_actions = {
-            "all": "Все объекты",
             "one": "Один объект",
+            "all": "Все объекты",
             "risk": "Риск"
         }
 
@@ -406,11 +406,26 @@ class MainWindow(QMainWindow):
         all_objects_action.triggered.connect(self.draw_all_objects_zones)
         draw_submenu.addAction(all_objects_action)
 
-        # Добавляем остальные пункты меню
-        for action_id, title in draw_actions.items():
-            if action_id not in ["one", "all"]:  # Пропускаем уже добавленные действия
-                action = QAction(title, self)
-                draw_submenu.addAction(action)
+        # Добавляем обработчик для "Риск"
+        risk_action = QAction(draw_actions["risk"], self)
+        risk_action.triggered.connect(self.draw_risk_zones)
+        draw_submenu.addAction(risk_action)
+
+        # Создание подменю для объектов
+        objects_menu = QMenu("Объекты", self)
+        draw_menu.addMenu(objects_menu)
+
+        # Создание действий для разных типов объектов
+        object_actions = {
+            ObjectType.POINT: "Точечный объект",
+            ObjectType.LINEAR: "Линейный объект",
+            ObjectType.STATIONARY: "Стационарный объект"
+        }
+
+        for obj_type, title in object_actions.items():
+            action = QAction(title, self)
+            action.triggered.connect(lambda checked, t=obj_type: self.start_drawing_object(t))
+            objects_menu.addAction(action)
 
     def _create_database(self):
         """Обработчик создания новой базы данных"""
@@ -692,6 +707,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(error_msg, 3000)
             print(f"Подробности ошибки: {e}")
             return False
+
+    def draw_risk_zones(self):
+        """Обработчик для пункта меню 'Рисовать' -> 'Риск'"""
+        from risk_zones import draw_risk_zones
+        draw_risk_zones(self)
 
     def draw_all_objects_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Все объекты'"""
