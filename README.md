@@ -148,3 +148,4 @@ GNU General Public License (GPL)
 ## Authors
 
 Kuznetsov Konstantin.
+email: kuznetsovkm@yandex.ru
