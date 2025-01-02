@@ -14,13 +14,12 @@ class ImpactZoneRenderer:
         # Цвета для каждой зоны
         self.zone_colors = {
             'R1': QColor(255, 0, 0, 180),  # Красный
-            'R2': QColor(255, 165, 0, 180),  # Оранжевый
-            'R3': QColor(255, 255, 0, 180),  # Желтый
+            'R2': QColor(0, 0, 255, 180),  # Синий
+            'R3': QColor(255, 165, 0, 180),  # Оранжевый
             'R4': QColor(0, 255, 0, 180),  # Зеленый
-            'R5': QColor(0, 0, 255, 180),  # Синий
-            'R6': QColor(128, 0, 128, 180)  # Фиолетовый
+            'R5': QColor(128, 0, 128, 180),  # Фиолетовый
+            'R6': QColor(255, 255, 0, 180),  # Желтый
         }
-
     def render_impact_zones(self, obj: Object, scale: float) -> QGraphicsPixmapItem:
         """
         Отрисовывает зоны поражающих факторов для объекта
