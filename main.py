@@ -4,7 +4,7 @@ import sys
 import os
 from pathlib import Path
 
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QImage, QIcon
 from PySide6.QtCore import QRectF
 
 from PySide6.QtWidgets import (
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor
 from PySide6.QtCore import Qt, QLineF, QEvent
 
-from measurement_tools import MeasurementTools
+from service.measurement_tools import MeasurementTools
 from service.database_handler import DatabaseHandler
 from service.edit_coordinates_manager import EditCoordinatesManager
 from service.plan_dialog import SelectPlanDialog
@@ -244,8 +244,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Моё приложение")
+        self.setWindowTitle("IRIS draw")
         self.setMinimumSize(800, 600)
+        self.__set_ico()
+        self.path_ico = str(Path(os.getcwd()))
 
         # Инициализация базовых атрибутов
         self.current_image_id = None
@@ -270,6 +272,10 @@ class MainWindow(QMainWindow):
 
         # Создание меню
         self.create_menu()
+
+    def __set_ico(self):
+        main_ico = QIcon('main_ico.png')
+        self.setWindowIcon(main_ico)
 
     def _create_central_widget(self):
         """Создание центрального виджета и компоновка элементов"""
@@ -331,9 +337,11 @@ class MainWindow(QMainWindow):
 
         length_action = menubar.addAction("Длина")
         length_action.triggered.connect(self.measurement_tools.start_length_measurement)
+        length_action.setIcon(QIcon("ico/measure.png"))
 
         area_action = menubar.addAction("Площадь")
         area_action.triggered.connect(self.measurement_tools.start_area_measurement)
+        area_action.setIcon(QIcon("ico/measure_area.png"))
 
     def resizeEvent(self, event):
         """Обработчик изменения размера окна"""
@@ -364,12 +372,16 @@ class MainWindow(QMainWindow):
     def _create_database_menu(self, file_menu):
         """Создание подменю для работы с базой данных"""
         database_menu = QMenu("База данных", self)
+        database_menu.setIcon(QIcon("ico/data_base.png"))
         file_menu.addMenu(database_menu)
 
         # Создание действий для работы с базой данных
         create_action = QAction("Создать", self)
+        create_action.setIcon(QIcon("ico/plus.png"))
         connect_action = QAction("Подключиться", self)
+        connect_action.setIcon(QIcon("ico/connect.png"))
         vacuum_action = QAction("Оптимизировать (VACUUM)", self)
+        vacuum_action.setIcon(QIcon("ico/vacuum.png"))
 
         # Установка идентификаторов
         create_action.setObjectName("create_action")
@@ -390,25 +402,28 @@ class MainWindow(QMainWindow):
         """Создание подменю для работы с планом"""
         gen_plan_menu = QMenu("Ген.план", self)
         plan_menu.addMenu(gen_plan_menu)
+        gen_plan_menu.setIcon(QIcon("ico/plan.png"))
 
         # Добавление действия для измерения масштаба
         scale_action = QAction("Измерить масштаб", self)
         scale_action.triggered.connect(self.toggle_scale_mode)
         plan_menu.addAction(scale_action)
+        scale_action.setIcon(QIcon("ico/scale.png"))
+
 
         # Создание действий для работы с планом
         actions = {
-            "add": ("Добавить", self.add_plan),
-            "select": ("Выбрать", self.select_plan),
-            "replace": ("Заменить", self.replace_plan),
-            "clear": ("Очистить", self.clear_plan),  # Добавляем новое действие
-            "save": ("Сохранить", self.save_plan),
-            "delete": ("Удалить план с объектами", self.delete_plan)
+            "add": ("Добавить", self.add_plan, "ico/plus.png"),
+            "select": ("Выбрать", self.select_plan, "ico/ok.png"),
+            "replace": ("Заменить", self.replace_plan, "ico/replace.png"),
+            "clear": ("Очистить", self.clear_plan, "ico/clear.png"),  # Добавляем новое действие
+            "save": ("Сохранить", self.save_plan, "ico/save.png"),
+            "delete": ("Удалить план с объектами", self.delete_plan, "ico/minus.png")
         }
 
         # Добавление действий в меню
-        for action_id, (title, handler) in actions.items():
-            action = QAction(title, self)
+        for action_id, (title, handler, icon_path) in actions.items():
+            action = QAction(QIcon(icon_path), title, self)
             if handler:
                 action.triggered.connect(handler)
             gen_plan_menu.addAction(action)
@@ -417,6 +432,7 @@ class MainWindow(QMainWindow):
         """Создание подменю для рисования"""
         draw_submenu = QMenu("Рисовать", self)
         draw_menu.addMenu(draw_submenu)
+        draw_submenu.setIcon(QIcon("ico/painter.png"))
 
         # Создание действий для рисования
         draw_actions = {
@@ -427,32 +443,36 @@ class MainWindow(QMainWindow):
 
         # Добавляем обработчик для "Один объект"
         one_object_action = QAction(draw_actions["one"], self)
+        one_object_action.setIcon(QIcon("ico/painter.png"))
         one_object_action.triggered.connect(self.draw_single_object_zones)
         draw_submenu.addAction(one_object_action)
 
         # Добавляем обработчик для "Все объекты"
         all_objects_action = QAction(draw_actions["all"], self)
+        all_objects_action.setIcon(QIcon("ico/painter.png"))
         all_objects_action.triggered.connect(self.draw_all_objects_zones)
         draw_submenu.addAction(all_objects_action)
 
         # Добавляем обработчик для "Риск"
         risk_action = QAction(draw_actions["risk"], self)
+        risk_action.setIcon(QIcon("ico/color_select.png"))
         risk_action.triggered.connect(self.draw_risk_zones)
         draw_submenu.addAction(risk_action)
 
         # Создание подменю для объектов
         objects_menu = QMenu("Объекты", self)
         draw_menu.addMenu(objects_menu)
+        objects_menu.setIcon(QIcon("ico/object.png"))
 
         # Создание действий для разных типов объектов
         object_actions = {
-            ObjectType.POINT: "Точечный объект",
-            ObjectType.LINEAR: "Линейный объект",
-            ObjectType.STATIONARY: "Стационарный объект"
+            ObjectType.POINT: ("Точечный объект", "ico/object.png"),
+            ObjectType.LINEAR: ("Линейный объект", "ico/polyline.png"),
+            ObjectType.STATIONARY: ("Стационарный объект", "ico/area.png")
         }
 
-        for obj_type, title in object_actions.items():
-            action = QAction(title, self)
+        for obj_type, (title, icon_path) in object_actions.items():
+            action = QAction(QIcon(icon_path), title, self)
             action.triggered.connect(lambda checked, t=obj_type: self.start_drawing_object(t))
             objects_menu.addAction(action)
 
