@@ -107,8 +107,10 @@ python main.py
 ```
 IRIS_0/
 ├── main.py                      # Main application entry point
-├── main_ico.png                 # Application icon
+├── main_ico.ico                 # Application icon
 ├── requirements.txt             # Project dependencies
+├── run.bat                      # script for start main.py
+├── run.vbs                      # script for run.bat
 ├── draw_zone/                   # Impact zone analysis
 │   ├── __init__.py
 │   ├── all_impact_zones.py
@@ -128,6 +130,8 @@ IRIS_0/
 └── service/                     # Core services
     ├── __init__.py
     ├── database_handler.py
+    ├── distance_analyzer.py
+    ├── distance_exporter.py
     ├── edit_coordinates_manager.py
     ├── measurement_tools.py
     ├── object_items.py
