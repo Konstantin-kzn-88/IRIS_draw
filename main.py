@@ -4,18 +4,15 @@ import sys
 import os
 from pathlib import Path
 
-from PySide6.QtGui import QImage, QIcon
-from PySide6.QtCore import QRectF
-
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QMenu, QGraphicsView, QGraphicsScene,
     QFileDialog, QGraphicsLineItem, QInputDialog,
     QGraphicsPixmapItem, QDialog, QSplitter,
-    QMessageBox
+    QMessageBox, QHBoxLayout, QPushButton
 )
-from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor
-from PySide6.QtCore import Qt, QLineF, QEvent
+from PySide6.QtGui import QAction, QPixmap, QPainter, QPen, QColor,QImage, QIcon
+from PySide6.QtCore import Qt, QLineF, QEvent,QRectF
 
 from service.measurement_tools import MeasurementTools
 from service.database_handler import DatabaseHandler
@@ -26,6 +23,8 @@ from service.object_items import create_object_item
 from service.object_manager import ObjectManager
 from iris_db.models import ObjectType
 from iris_db.database import DatabaseManager
+from service.distance_analyzer import DistanceAnalyzer
+from service.distance_exporter import DistanceExporter
 
 
 class ScaleGraphicsView(QGraphicsView):
@@ -274,7 +273,7 @@ class MainWindow(QMainWindow):
         self.create_menu()
 
     def __set_ico(self):
-        main_ico = QIcon('main_ico.png')
+        main_ico = QIcon('main_ico.ico')
         self.setWindowIcon(main_ico)
 
     def _create_central_widget(self):
@@ -342,6 +341,100 @@ class MainWindow(QMainWindow):
         area_action = menubar.addAction("Площадь")
         area_action.triggered.connect(self.measurement_tools.start_area_measurement)
         area_action.setIcon(QIcon("ico/measure_area.png"))
+
+        # Добавляем разделитель
+        menubar.addSeparator()
+
+        # Добавляем действие для таблицы расстояний
+        distance_table_action = QAction("Таблица расстояний", self)
+        distance_table_action.triggered.connect(self.show_distance_table)
+        distance_table_action.setIcon(QIcon("ico/table.png"))
+        menubar.addAction(distance_table_action)
+
+    def show_distance_table(self):
+        """Показывает диалог с таблицей расстояний между объектами"""
+        try:
+            # Проверяем необходимые условия
+            if not self.is_plan_loaded():
+                self.statusBar().showMessage("Сначала загрузите план", 3000)
+                return
+
+            if not self.scale_for_plan:
+                self.statusBar().showMessage("Сначала задайте масштаб", 3000)
+                return
+
+            # Получаем объекты текущего плана
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                objects = db.objects.get_by_image_id(self.current_image_id)
+
+            if len(objects) < 2:
+                self.statusBar().showMessage(
+                    "Для построения таблицы необходимо минимум два объекта",
+                    3000
+                )
+                return
+
+            # Создаем анализатор расстояний и выполняем расчеты
+            self.distance_analyzer = DistanceAnalyzer(self)
+            self.distance_analyzer.analyze_objects(objects, self.scale_for_plan)
+
+            # Создаем диалог
+            distance_dialog = QDialog(self)
+            distance_dialog.setWindowTitle("Расстояния между объектами")
+            distance_dialog.resize(600, 400)
+
+            layout = QVBoxLayout(distance_dialog)
+
+            # Добавляем таблицу
+            distance_widget = self.distance_analyzer.get_distance_widget()
+            layout.addWidget(distance_widget)
+
+            # Добавляем кнопки
+            button_layout = QHBoxLayout()
+
+            export_button = QPushButton("Экспортировать в Word")
+            close_button = QPushButton("Закрыть")
+
+            button_layout.addWidget(export_button)
+            button_layout.addWidget(close_button)
+            layout.addLayout(button_layout)
+
+            def export_to_word():
+                filename, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Сохранить таблицу",
+                    "",
+                    "Word Documents (*.docx)"
+                )
+                if filename:
+                    if not filename.endswith('.docx'):
+                        filename += '.docx'
+                    try:
+                        exporter = DistanceExporter()
+                        exporter.export_to_word(
+                            self.distance_analyzer.distances,
+                            objects,
+                            filename
+                        )
+                        self.statusBar().showMessage(
+                            "Таблица успешно экспортирована",
+                            3000
+                        )
+                    except Exception as e:
+                        self.statusBar().showMessage(
+                            f"Ошибка при экспорте: {str(e)}",
+                            3000
+                        )
+
+            export_button.clicked.connect(export_to_word)
+            close_button.clicked.connect(distance_dialog.close)
+
+            # Показываем диалог
+            distance_dialog.exec_()
+
+        except Exception as e:
+            self.statusBar().showMessage(f"Ошибка при создании таблицы: {str(e)}", 3000)
+            print(f"Подробности ошибки: {e}")
 
     def resizeEvent(self, event):
         """Обработчик изменения размера окна"""
