@@ -63,6 +63,18 @@ class ScaleGraphicsView(QGraphicsView):
             QPainter.RenderHint.SmoothPixmapTransform
         )
 
+    def reset_scale(self):
+        """Сбрасывает масштаб к исходному значению (100%)"""
+        # Сбрасываем трансформацию
+        self.resetTransform()
+        self.current_scale = 1.0
+
+        if self.parent:
+            self.parent.statusBar().showMessage(
+                "Масштаб: 100%",
+                self.parent.time_status
+            )
+
     def wheelEvent(self, event):
         """Обработка прокрутки колеса мыши для масштабирования"""
         if event.angleDelta().y() > 0:
@@ -73,18 +85,16 @@ class ScaleGraphicsView(QGraphicsView):
             factor = 1.0 / self.zoom_factor
 
         new_scale = self.current_scale * factor
-        if new_scale < self.min_scale or new_scale > self.max_scale:
-            return
+        if self.min_scale <= new_scale <= self.max_scale:
+            self.scale(factor, factor)
+            self.current_scale = new_scale
 
-        self.scale(factor, factor)
-        self.current_scale = new_scale
-
-        if self.parent:
-            scale_percentage = self.current_scale * 100
-            self.parent.statusBar().showMessage(
-                f"Масштаб: {scale_percentage:.0f}%",
-                self.parent.time_status
-            )
+            if self.parent:
+                scale_percentage = self.current_scale * 100
+                self.parent.statusBar().showMessage(
+                    f"Масштаб: {scale_percentage:.0f}%",
+                    self.parent.time_status
+                )
 
     def mousePressEvent(self, event):
         """Обработка нажатия кнопки мыши"""
@@ -999,10 +1009,15 @@ class MainWindow(QMainWindow):
 
                     self.scene.clear()
                     self.scene.addPixmap(pixmap)
-                    self.view.fitInView(
-                        self.scene.sceneRect(),
-                        Qt.AspectRatioMode.KeepAspectRatio
-                    )
+
+                    # Сбрасываем масштаб к 100%
+                    self.view.reset_scale()
+
+                    # Устанавливаем сцену по размеру изображения
+                    self.scene.setSceneRect(pixmap.rect())
+
+                    # Центрируем изображение
+                    self.view.centerOn(self.scene.sceneRect().center())
 
                     self.load_objects_from_image(plan_id)
                     self.statusBar().showMessage("План успешно загружен", 3000)
@@ -1011,6 +1026,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при загрузке плана: {str(e)}", 3000)
             print(f"Подробности ошибки: {e}")
+
 
     def load_objects_from_image(self, image_id):
         """Загрузка объектов изображения в таблицу и создание их графических представлений"""
