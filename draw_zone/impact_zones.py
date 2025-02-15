@@ -11,15 +11,16 @@ class ImpactZoneRenderer:
 
     def __init__(self, scene: QGraphicsScene):
         self.scene = scene
-        # Цвета для каждой зоны
+        # Цвета для каждой зоны без прозрачности
         self.zone_colors = {
-            'R1': QColor(255, 0, 0, 180),  # Красный
-            'R2': QColor(0, 0, 255, 180),  # Синий
-            'R3': QColor(255, 165, 0, 180),  # Оранжевый
-            'R4': QColor(0, 255, 0, 180),  # Зеленый
-            'R5': QColor(128, 0, 128, 180),  # Фиолетовый
-            'R6': QColor(255, 255, 0, 180),  # Желтый
+            'R6': QColor(255, 255, 0),  # Желтый
+            'R5': QColor(128, 0, 128),  # Фиолетовый
+            'R4': QColor(0, 255, 0),  # Зеленый
+            'R3': QColor(255, 165, 0),  # Оранжевый
+            'R2': QColor(0, 0, 255),  # Синий
+            'R1': QColor(255, 0, 0)  # Красный
         }
+
     def render_impact_zones(self, obj: Object, scale: float) -> QGraphicsPixmapItem:
         """
         Отрисовывает зоны поражающих факторов для объекта
@@ -39,9 +40,9 @@ class ImpactZoneRenderer:
         width = int(scene_rect.width())
         height = int(scene_rect.height())
 
-        # Создаем прозрачное изображение
+        # Создаем белое изображение
         image = QImage(width, height, QImage.Format_ARGB32)
-        image.fill(Qt.transparent)
+        image.fill(Qt.white)
 
         # Создаем художника для рисования
         painter = QPainter(image)
@@ -51,11 +52,10 @@ class ImpactZoneRenderer:
         center_x = obj.coordinates[0].x
         center_y = obj.coordinates[0].y
 
-        # Рисуем круги для каждой зоны (от большего к меньшему)
+        # Рисуем круги для каждой зоны (от большей к меньшей)
         zones = ['R6', 'R5', 'R4', 'R3', 'R2', 'R1']
         for zone in zones:
             radius = getattr(obj, zone)  # Получаем радиус из объекта
-            # Переводим радиус из метров в пиксели
             radius_px = radius / scale
 
             # Устанавливаем цвет для зоны
@@ -75,9 +75,13 @@ class ImpactZoneRenderer:
         # Создаем QPixmap из изображения
         pixmap = QPixmap.fromImage(image)
 
-        # Создаем элемент сцены
+        # Удаляем белые пиксели одной маской
+        mask = pixmap.createMaskFromColor(QColor(255, 255, 255))
+        pixmap.setMask(mask)
+
+        # Создаем элемент сцены с прозрачностью
         item = QGraphicsPixmapItem(pixmap)
-        item.setOpacity(0.6)  # Устанавливаем прозрачность
+        item.setOpacity(0.4)
 
         return item
 

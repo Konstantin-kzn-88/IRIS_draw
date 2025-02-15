@@ -13,13 +13,30 @@ class AllImpactRenderer:
         self.scene = scene
         # Цвета для каждой зоны
         self.zone_colors = {
-            'R1': QColor(255, 0, 0, 180),  # Красный
-            'R2': QColor(0, 0, 255, 180),  # Синий
-            'R3': QColor(255, 165, 0, 180),  # Оранжевый
-            'R4': QColor(0, 255, 0, 180),  # Зеленый
-            'R5': QColor(128, 0, 128, 180),  # Фиолетовый
-            'R6': QColor(255, 255, 0, 180),  # Желтый
+            'R1': QColor(255, 0, 0, 100),  # Красный
+            'R2': QColor(0, 0, 255, 100),  # Синий
+            'R3': QColor(255, 165, 0, 100),  # Оранжевый
+            'R4': QColor(0, 255, 0, 100),  # Зеленый
+            'R5': QColor(128, 0, 128, 100),  # Фиолетовый
+            'R6': QColor(255, 255, 0, 100),  # Желтый
         }
+
+    def blend_images(self, images: list[QImage]) -> QImage:
+        """
+        Объединяет несколько изображений с учетом прозрачности
+        """
+        if not images:
+            return None
+
+        result = QImage(images[0].size(), QImage.Format_ARGB32)
+        result.fill(Qt.transparent)
+
+        painter = QPainter(result)
+        for img in images:
+            painter.drawImage(0, 0, img)
+        painter.end()
+
+        return result
 
     def render_point_zone(self, obj: Object, painter: QPainter, zone: str, scale: float):
         """Отрисовка конкретной зоны для точечного объекта"""
@@ -66,6 +83,7 @@ class AllImpactRenderer:
 
         for coord in obj.coordinates[1:]:
             path.lineTo(coord.x, coord.y)
+        path.closeSubpath()
 
         radius = getattr(obj, zone)
         width_px = radius / scale
@@ -82,7 +100,7 @@ class AllImpactRenderer:
         # Для зоны R1 дополнительно заливаем внутреннюю область
         if zone == 'R1':
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(255, 0, 0, 200))
+            painter.setBrush(QColor(255, 0, 0, 100))
             painter.drawPath(path)
 
     def render_zone_for_all_objects(self, objects: list[Object], painter: QPainter, zone: str, scale: float):
@@ -105,30 +123,32 @@ class AllImpactRenderer:
     def render_impact_zones(self, objects: list[Object], scale: float) -> QGraphicsPixmapItem:
         """
         Отрисовывает зоны поражающих факторов для всех объектов
-
-        Args:
-            objects: Список объектов для отрисовки
-            scale: Масштаб (метров в пикселе)
-
-        Returns:
-            QGraphicsPixmapItem: Элемент сцены с отрисованными зонами
         """
-        # Получаем размеры сцены
         scene_rect = self.scene.sceneRect()
         width = int(scene_rect.width())
         height = int(scene_rect.height())
 
-        # Создаем прозрачное изображение
+        # Создаем белое изображение
         image = QImage(width, height, QImage.Format_ARGB32)
-        image.fill(Qt.transparent)
+        image.fill(Qt.white)
 
         # Создаем художника для рисования
         painter = QPainter(image)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        # Цвета зон без прозрачности
+        zone_colors_solid = {
+            'R6': QColor(255, 255, 0),  # Желтый
+            'R5': QColor(128, 0, 128),  # Фиолетовый
+            'R4': QColor(0, 255, 0),  # Зеленый
+            'R3': QColor(255, 165, 0),  # Оранжевый
+            'R2': QColor(0, 0, 255),  # Синий
+            'R1': QColor(255, 0, 0)  # Красный
+        }
+        self.zone_colors = zone_colors_solid
+
         # Отрисовываем зоны от большей к меньшей
-        zones = ['R6', 'R5', 'R4', 'R3', 'R2', 'R1']
-        for zone in zones:
+        for zone in ['R6', 'R5', 'R4', 'R3', 'R2', 'R1']:
             self.render_zone_for_all_objects(objects, painter, zone, scale)
 
         painter.end()
@@ -136,9 +156,13 @@ class AllImpactRenderer:
         # Создаем QPixmap из изображения
         pixmap = QPixmap.fromImage(image)
 
-        # Создаем элемент сцены
+        # Удаляем белые пиксели одной маской
+        mask = pixmap.createMaskFromColor(QColor(255, 255, 255))
+        pixmap.setMask(mask)
+
+        # Создаем элемент сцены с прозрачностью
         item = QGraphicsPixmapItem(pixmap)
-        item.setOpacity(0.6)
+        item.setOpacity(0.4)
 
         return item
 
