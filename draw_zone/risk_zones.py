@@ -1,11 +1,9 @@
-import time
-
-from PySide6.QtWidgets import QGraphicsPixmapItem, QApplication
+from PySide6.QtWidgets import QGraphicsPixmapItem
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtCore import Qt, QObject, Signal, QRunnable, QThreadPool
+from PySide6.QtCore import QObject, Signal, QRunnable
 import numpy as np
+from shapely import distance as shapely_distance, points as shapely_points
 from shapely.geometry import Point, LineString, Polygon
-from iris_db.models import ObjectType
 from iris_db.database import DatabaseManager
 
 # Используем те же константы, что и в example_heatmap.py
@@ -23,7 +21,7 @@ PALETTE = np.array([
 ], dtype='uint8')
 PALETTE[:, [0, 2]] = PALETTE[:, [2, 0]]  # Swap R and B channels
 
-SEARCH_STEPS = [100, 20, 5, 1]
+ROW_CHUNK_SIZE = 256
 
 
 class WorkerSignals(QObject):
@@ -42,124 +40,95 @@ class RadiationWorker(QRunnable):
         self.object_in_table = object_in_table
         self.scale_plan = scale_plan
         self.blurring = blurring
-        print(f"RadiationWorker initialized with dimensions: {width}x{height}")  # Debug print
 
     def run(self):
         try:
-            print(f"Starting calculations for object {self.object_in_table['name']}")  # Debug print
-
-            # создадим силу воздействия
-            R6 = int(self.object_in_table['R6'])
-            dist_power = [i for i in range(R6)]
-            power = list(reversed([i / 100 for i in dist_power]))
-
-            print(f"Power array created with length: {len(power)}")  # Debug print
-
-            # нулевая матрица
-            zeros_array = np.zeros((self.height, self.width))  # Изменен порядок размерностей
-
-            # Создадим объект до которого идет измерение
-            obj = self.create_shapely_object()
-            print(f"Created shapely object: {obj}")  # Debug print
-
-            # ШАГ 1.
-            print("Starting step 1: 50px squares")
-            find_square_50 = self.search_nearby_squares(
-                x_min=0,
-                x_max=self.width - 1,  # Уменьшаем на 1 чтобы не выйти за границы
-                y_min=0,
-                y_max=self.height - 1,
-                size_search=SEARCH_STEPS[0],
-                object_under_study=obj
-            )
-            print(f"Found {len(find_square_50) // 8} squares in step 1")  # Debug print
-
-            # ШАГ 2.
-            print("Starting step 2: 10px squares")
-            find_square_10 = []
-            for i in range(0, len(find_square_50), 8):
-                sq = find_square_50[i:i + 8]
-                result_square = self.search_nearby_squares(
-                    x_min=sq[0],
-                    x_max=min(sq[2], self.width - 1),
-                    y_min=sq[1],
-                    y_max=min(sq[5], self.height - 1),
-                    size_search=SEARCH_STEPS[1],
-                    object_under_study=obj
-                )
-                find_square_10.extend(result_square)
-            print(f"Found {len(find_square_10) // 8} squares in step 2")  # Debug print
-
-            # ШАГ 3.
-            print("Starting step 3: 2px squares")
-            find_square_2 = []
-            for i in range(0, len(find_square_10), 8):
-                sq = find_square_10[i:i + 8]
-                result_square = self.search_nearby_squares(
-                    x_min=sq[0],
-                    x_max=min(sq[2], self.width - 1),
-                    y_min=sq[1],
-                    y_max=min(sq[5], self.height - 1),
-                    size_search=SEARCH_STEPS[2],
-                    object_under_study=obj
-                )
-                find_square_2.extend(result_square)
-            print(f"Found {len(find_square_2) // 8} squares in step 3")  # Debug print
-
-            # ШАГ 4.
-            print("Starting step 4: individual points")
-            find_coordinate_step_4 = []
-            for i in range(0, len(find_square_2), 8):
-                sq = find_square_2[i:i + 8]
-                x_line = [i for i in range(sq[0], min(sq[2] + 1, self.width), SEARCH_STEPS[3])]
-                y_line = [i for i in range(sq[1], min(sq[5] + 1, self.height), SEARCH_STEPS[3])]
-                for x in x_line:
-                    for y in y_line:
-                        search_point = Point(x, y)
-                        find_coordinate_step_4.append(search_point)
-
-            print(f"Processing {len(find_coordinate_step_4)} points")  # Debug print
-
-            # Удалим повторы точек и посчитаем в какой точке какое воздействие
-            unique_points = list(set(find_coordinate_step_4))
-            print(f"Processing {len(unique_points)} unique points")  # Debug print
-
-            for item in unique_points:
-                distance = int(item.distance(obj))
-                x, y = int(item.x), int(item.y)
-
-                # Проверка границ массива
-                if 0 <= y < self.height and 0 <= x < self.width:
-                    if distance == 0:
-                        zeros_array[y, x] = max(power)
-                    else:
-                        if distance <= R6:
-                            dist_index = min(distance - 1, len(dist_power) - 1)
-                            zeros_array[y, x] = power[dist_index]
-
-            print("Calculations completed successfully")  # Debug print
-
+            result = self.calculate()
         except Exception as e:
-            print(f"Error in calculations: {str(e)}")  # Debug print
             self.signals.error.emit(str(e))
-            return
+        else:
+            self.signals.result.emit(result)
+        finally:
+            self.signals.finished.emit()
 
-        self.signals.result.emit(zeros_array)
-        self.signals.finished.emit()
+    def calculate(self) -> tuple[int, int, np.ndarray]:
+        """Вычисляет фрагмент зоны риска для одного объекта."""
+        radius = int(self.object_in_table['R6'])
+        if radius <= 0:
+            raise ValueError("Радиус R6 должен быть больше нуля")
+
+        obj = self.create_shapely_object()
+        x_min, y_min, x_max, y_max = self._calculation_bounds(obj, radius)
+
+        if x_min > x_max or y_min > y_max:
+            return 0, 0, np.zeros((0, 0), dtype=np.float64)
+
+        return (
+            x_min,
+            y_min,
+            self._calculate_fragment(
+                obj,
+                radius,
+                x_min,
+                y_min,
+                x_max,
+                y_max
+            )
+        )
+
+    def _calculation_bounds(self, obj, radius: int) -> tuple[int, int, int, int]:
+        """Возвращает ограниченную планом область возможного воздействия."""
+        min_x, min_y, max_x, max_y = obj.bounds
+        return (
+            max(0, int(np.floor(min_x - radius))),
+            max(0, int(np.floor(min_y - radius))),
+            min(self.width - 1, int(np.ceil(max_x + radius))),
+            min(self.height - 1, int(np.ceil(max_y + radius)))
+        )
+
+    @staticmethod
+    def _power_from_distances(distances: np.ndarray, radius: int) -> np.ndarray:
+        """Повторяет исходное округление расстояния через int()."""
+        integer_distances = np.floor(distances).astype(np.int64)
+        values = np.zeros(distances.shape, dtype=np.float64)
+        affected = integer_distances <= radius
+        values[affected] = (
+            radius - np.maximum(integer_distances[affected], 1)
+        ) / 100.0
+        return values
+
+    def _calculate_fragment(self, obj, radius: int, x_min: int, y_min: int,
+                            x_max: int, y_max: int) -> np.ndarray:
+        """Векторно вычисляет воздействие порциями строк."""
+        x_coordinates = np.arange(x_min, x_max + 1, dtype=np.float64)
+        fragment = np.zeros(
+            (y_max - y_min + 1, x_max - x_min + 1),
+            dtype=np.float64
+        )
+
+        for start_y in range(y_min, y_max + 1, ROW_CHUNK_SIZE):
+            stop_y = min(start_y + ROW_CHUNK_SIZE, y_max + 1)
+            y_coordinates = np.arange(start_y, stop_y, dtype=np.float64)
+            x_grid, y_grid = np.meshgrid(x_coordinates, y_coordinates)
+            grid_points = shapely_points(x_grid, y_grid)
+            distances = shapely_distance(grid_points, obj)
+            row_offset = start_y - y_min
+            fragment[row_offset:row_offset + len(y_coordinates)] = (
+                self._power_from_distances(distances, radius)
+            )
+
+        return fragment
 
     def create_shapely_object(self):
         """
         Создает геометрический объект Shapely из данных таблицы
         """
-        # Преобразуем строку координат в список пар координат
-        coords_str = self.object_in_table['coordinates']
-        # Убираем скобки и разделяем по точке с запятой
-        coord_pairs = coords_str.replace('(', '').replace(')', '').split('; ')
-        # Преобразуем строки координат в числа
-        coords = []
-        for pair in coord_pairs:
-            x, y = map(float, pair.split(','))
-            coords.append((x, y))
+        source_coordinates = self.object_in_table['coordinates']
+        if isinstance(source_coordinates, str):
+            coord_pairs = source_coordinates.replace('(', '').replace(')', '').split('; ')
+            coords = [tuple(map(float, pair.split(','))) for pair in coord_pairs]
+        else:
+            coords = [(float(x), float(y)) for x, y in source_coordinates]
 
         obj_type = self.object_in_table['type']
 
@@ -172,54 +141,13 @@ class RadiationWorker(QRunnable):
         else:
             raise ValueError(f"Неизвестный тип объекта: {obj_type}")
 
-    def search_nearby_squares(self, x_min: int, x_max: int, y_min: int, y_max: int,
-                              size_search: int, object_under_study) -> list:
-        """
-        Функция поиска близлежащих координат
-        """
-        R6 = float(self.object_in_table['R6'])  # Преобразуем в float
-        x_line = range(x_min, x_max + 1, size_search)
-        y_line = range(y_min, y_max + 1, size_search)
-        result_square = []
-
-        for x in x_line:
-            for y in y_line:
-                # Создаем квадрат для проверки
-                square_coords = [
-                    (x, y),
-                    (min(x + size_search, self.width), y),
-                    (min(x + size_search, self.width), min(y + size_search, self.height)),
-                    (x, min(y + size_search, self.height))
-                ]
-                search_polygon = Polygon(square_coords)
-
-                try:
-                    distance = search_polygon.distance(object_under_study)
-                    if distance < R6:
-                        result_square.extend([
-                            x, y,
-                            min(x + size_search, self.width), y,
-                            min(x + size_search, self.width), min(y + size_search, self.height),
-                            x, min(y + size_search, self.height)
-                        ])
-                except Exception as e:
-                    print(f"Error calculating distance for square at ({x},{y}): {e}")
-                    continue
-
-        return result_square
-
-
 class RiskCalculator:
     def __init__(self, main_window):
         self.main_window = main_window
-        self.thread_pool = QThreadPool()
         self.heatmap = np.zeros((1, 1))
-        self.start_time = time.time()
-        self.object_times = {}
 
     def calculate_risk(self, objects):
         """Вычисляет зоны риска для списка объектов"""
-        print("Starting calculate_risk")
         scene_rect = self.main_window.scene.sceneRect()
         width = int(scene_rect.width())
         height = int(scene_rect.height())
@@ -237,11 +165,8 @@ class RiskCalculator:
                 'R4': obj.R4,
                 'R5': obj.R5,
                 'R6': obj.R6,
-                'coordinates': '; '.join([f"({c.x}, {c.y})" for c in obj.coordinates])
+                'coordinates': [(c.x, c.y) for c in obj.coordinates]
             }
-
-            print(f"Processing object: {obj_dict['name']}")
-            self.object_times[obj_dict['name']] = time.time()
 
             worker = RadiationWorker(
                 width,
@@ -250,35 +175,18 @@ class RiskCalculator:
                 self.main_window.scale_for_plan,
                 blurring=1
             )
-            worker.signals.result.connect(self.worker_output)
-            worker.signals.finished.connect(
-                lambda name=obj_dict['name']: self.worker_complete(name)
-            )
-            self.thread_pool.start(worker)
+            self.worker_output(worker.calculate())
 
-        # Ждем завершения всех расчетов
-        while self.thread_pool.activeThreadCount() > 0:
-            QApplication.processEvents()
-
-        print("All workers completed")
-        print(f"Final heatmap values - max: {np.max(self.heatmap)}, min: {np.min(self.heatmap)}")
         return self.create_risk_pixmap(self.heatmap)
 
-    def worker_output(self, result_array):
+    def worker_output(self, result):
         """Обработка результата от worker'а"""
-        print("Received worker output")
-        print(f"Result array max: {np.max(result_array)}, min: {np.min(result_array)}")
-        self.heatmap = self.heatmap + result_array
+        x_min, y_min, result_array = result
+        height, width = result_array.shape
+        if height and width:
+            self.heatmap[y_min:y_min + height, x_min:x_min + width] += result_array
 
-    def worker_complete(self, obj_name):
-        """Обработка завершения worker'а"""
-        object_time = time.time() - self.object_times[obj_name]
-        print(f"Worker complete for {obj_name}. Time taken: {object_time:.2f} seconds")
-
-    def create_risk_pixmap(self,heatmap):
-        print("Generating heatmap visualization")  # Отладочный вывод
-        print(f"Array max value: {np.max(heatmap)}, min value: {np.min(heatmap)}")
-
+    def create_risk_pixmap(self, heatmap):
         bins = np.array([i * np.max(heatmap) / 30 for i in range(1, 31)])
         digitize = np.digitize(heatmap, bins, right=True)
         digitize = np.expand_dims(digitize, axis=2)
@@ -293,7 +201,6 @@ class RiskCalculator:
         # Находим белые пиксели (RGB = 255,255,255) и делаем их прозрачными
         white_pixels = (im[..., 0] == 255) & (im[..., 1] == 255) & (im[..., 2] == 255)
         im[white_pixels, 3] = 0  # Устанавливаем альфа-канал в 0 для белых пикселей
-        print(f"Generated image dimensions: {w}x{h}")  # Отладочный вывод
         image = QImage(im.data, w, h, 4 * w, QImage.Format_ARGB32)
 
         return QPixmap.fromImage(image)

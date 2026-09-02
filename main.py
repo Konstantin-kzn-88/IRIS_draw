@@ -540,22 +540,37 @@ class MainWindow(QMainWindow):
 
         # Создание действий для рисования
         draw_actions = {
-            "one": "Один объект",
-            "all": "Все объекты",
+            "one_isolines": "Один объект — изолинии",
+            "all_isolines": "Все объекты — изолинии",
+            "one_filled": "Один объект — заливка",
+            "all_filled": "Все объекты — заливка",
             "risk": "Риск"
         }
 
         # Добавляем обработчик для "Один объект"
-        one_object_action = QAction(draw_actions["one"], self)
+        one_object_action = QAction(draw_actions["one_isolines"], self)
         one_object_action.setIcon(QIcon("ico/painter.png"))
         one_object_action.triggered.connect(self.draw_single_object_zones)
         draw_submenu.addAction(one_object_action)
 
         # Добавляем обработчик для "Все объекты"
-        all_objects_action = QAction(draw_actions["all"], self)
+        all_objects_action = QAction(draw_actions["all_isolines"], self)
         all_objects_action.setIcon(QIcon("ico/painter.png"))
         all_objects_action.triggered.connect(self.draw_all_objects_zones)
         draw_submenu.addAction(all_objects_action)
+
+        # Старый способ отрисовки сплошной цветной заливкой
+        filled_one_action = QAction(draw_actions["one_filled"], self)
+        filled_one_action.setIcon(QIcon("ico/color_select.png"))
+        filled_one_action.triggered.connect(self.draw_single_object_zones_filled)
+        draw_submenu.addAction(filled_one_action)
+
+        filled_all_action = QAction(draw_actions["all_filled"], self)
+        filled_all_action.setIcon(QIcon("ico/color_select.png"))
+        filled_all_action.triggered.connect(self.draw_all_objects_zones_filled)
+        draw_submenu.addAction(filled_all_action)
+
+        draw_submenu.addSeparator()
 
         # Добавляем обработчик для "Риск"
         risk_action = QAction(draw_actions["risk"], self)
@@ -893,6 +908,16 @@ class MainWindow(QMainWindow):
         """Обработчик для пункта меню 'Рисовать' -> 'Все объекты'"""
         from draw_zone.all_impact_zones import draw_all_impact_zones
         draw_all_impact_zones(self)
+
+    def draw_single_object_zones_filled(self):
+        """Рисует заливкой зоны выбранного объекта."""
+        from draw_zone.filled_zone_renderer import draw_filled_single_object_zones
+        draw_filled_single_object_zones(self)
+
+    def draw_all_objects_zones_filled(self):
+        """Рисует заливкой зоны всех объектов."""
+        from draw_zone.filled_zone_renderer import draw_filled_all_object_zones
+        draw_filled_all_object_zones(self)
 
     def draw_single_object_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Один объект'"""
