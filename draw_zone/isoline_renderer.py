@@ -76,11 +76,14 @@ class IsolineRenderer:
         stroker.setWidth(radius_px * 2)
         stroker.setCapStyle(Qt.RoundCap)
         stroker.setJoinStyle(Qt.RoundJoin)
-        zone_path = stroker.createStroke(object_path)
+        # QPainterPathStroker формирует перекрывающиеся контуры отдельных
+        # сегментов. Без упрощения их внутренние границы отображаются как
+        # поперечные линии в узлах ломаной.
+        zone_path = stroker.createStroke(object_path).simplified()
 
         if obj.object_type == ObjectType.STATIONARY:
             # Оставляем только внешнюю границу зоны на расстоянии R от объекта.
-            zone_path = zone_path.united(object_path)
+            zone_path = zone_path.united(object_path).simplified()
 
         return zone_path
 
