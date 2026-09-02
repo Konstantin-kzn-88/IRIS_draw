@@ -267,6 +267,7 @@ class MainWindow(QMainWindow):
         self.temp_line = None
         self.time_status = 10000
         self.object_items = {}
+        self.isoline_width = 2.0
 
         # Создание основных компонентов интерфейса
         self._create_central_widget()
@@ -561,6 +562,11 @@ class MainWindow(QMainWindow):
         risk_action.setIcon(QIcon("ico/color_select.png"))
         risk_action.triggered.connect(self.draw_risk_zones)
         draw_submenu.addAction(risk_action)
+
+        draw_submenu.addSeparator()
+        isoline_width_action = QAction("Толщина изолиний…", self)
+        isoline_width_action.triggered.connect(self.set_isoline_width)
+        draw_submenu.addAction(isoline_width_action)
 
         # Создание подменю для объектов
         objects_menu = QMenu("Объекты", self)
@@ -864,6 +870,24 @@ class MainWindow(QMainWindow):
         """Обработчик для пункта меню 'Рисовать' -> 'Риск'"""
         from draw_zone.risk_zones import draw_risk_zones
         draw_risk_zones(self)
+
+    def set_isoline_width(self):
+        """Задает толщину изолиний для последующих построений."""
+        width, ok = QInputDialog.getDouble(
+            self,
+            "Толщина изолиний",
+            "Толщина линии, пикс.:",
+            self.isoline_width,
+            0.5,
+            20.0,
+            1,
+        )
+        if ok:
+            self.isoline_width = width
+            self.statusBar().showMessage(
+                f"Толщина изолиний: {width:g} пикс.",
+                3000,
+            )
 
     def draw_all_objects_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Все объекты'"""
