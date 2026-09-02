@@ -267,6 +267,7 @@ class MainWindow(QMainWindow):
         self.temp_line = None
         self.time_status = 10000
         self.object_items = {}
+        self.isoline_width = 2.0
 
         # Создание основных компонентов интерфейса
         self._create_central_widget()
@@ -539,28 +540,48 @@ class MainWindow(QMainWindow):
 
         # Создание действий для рисования
         draw_actions = {
-            "one": "Один объект",
-            "all": "Все объекты",
+            "one_isolines": "Один объект — изолинии",
+            "all_isolines": "Все объекты — изолинии",
+            "one_filled": "Один объект — заливка",
+            "all_filled": "Все объекты — заливка",
             "risk": "Риск"
         }
 
         # Добавляем обработчик для "Один объект"
-        one_object_action = QAction(draw_actions["one"], self)
+        one_object_action = QAction(draw_actions["one_isolines"], self)
         one_object_action.setIcon(QIcon("ico/painter.png"))
         one_object_action.triggered.connect(self.draw_single_object_zones)
         draw_submenu.addAction(one_object_action)
 
         # Добавляем обработчик для "Все объекты"
-        all_objects_action = QAction(draw_actions["all"], self)
+        all_objects_action = QAction(draw_actions["all_isolines"], self)
         all_objects_action.setIcon(QIcon("ico/painter.png"))
         all_objects_action.triggered.connect(self.draw_all_objects_zones)
         draw_submenu.addAction(all_objects_action)
+
+        # Старый способ отрисовки сплошной цветной заливкой
+        filled_one_action = QAction(draw_actions["one_filled"], self)
+        filled_one_action.setIcon(QIcon("ico/color_select.png"))
+        filled_one_action.triggered.connect(self.draw_single_object_zones_filled)
+        draw_submenu.addAction(filled_one_action)
+
+        filled_all_action = QAction(draw_actions["all_filled"], self)
+        filled_all_action.setIcon(QIcon("ico/color_select.png"))
+        filled_all_action.triggered.connect(self.draw_all_objects_zones_filled)
+        draw_submenu.addAction(filled_all_action)
+
+        draw_submenu.addSeparator()
 
         # Добавляем обработчик для "Риск"
         risk_action = QAction(draw_actions["risk"], self)
         risk_action.setIcon(QIcon("ico/color_select.png"))
         risk_action.triggered.connect(self.draw_risk_zones)
         draw_submenu.addAction(risk_action)
+
+        draw_submenu.addSeparator()
+        isoline_width_action = QAction("Толщина изолиний…", self)
+        isoline_width_action.triggered.connect(self.set_isoline_width)
+        draw_submenu.addAction(isoline_width_action)
 
         # Создание подменю для объектов
         objects_menu = QMenu("Объекты", self)
@@ -865,10 +886,38 @@ class MainWindow(QMainWindow):
         from draw_zone.risk_zones import draw_risk_zones
         draw_risk_zones(self)
 
+    def set_isoline_width(self):
+        """Задает толщину изолиний для последующих построений."""
+        width, ok = QInputDialog.getDouble(
+            self,
+            "Толщина изолиний",
+            "Толщина линии, пикс.:",
+            self.isoline_width,
+            0.5,
+            20.0,
+            1,
+        )
+        if ok:
+            self.isoline_width = width
+            self.statusBar().showMessage(
+                f"Толщина изолиний: {width:g} пикс.",
+                3000,
+            )
+
     def draw_all_objects_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Все объекты'"""
         from draw_zone.all_impact_zones import draw_all_impact_zones
         draw_all_impact_zones(self)
+
+    def draw_single_object_zones_filled(self):
+        """Рисует заливкой зоны выбранного объекта."""
+        from draw_zone.filled_zone_renderer import draw_filled_single_object_zones
+        draw_filled_single_object_zones(self)
+
+    def draw_all_objects_zones_filled(self):
+        """Рисует заливкой зоны всех объектов."""
+        from draw_zone.filled_zone_renderer import draw_filled_all_object_zones
+        draw_filled_all_object_zones(self)
 
     def draw_single_object_zones(self):
         """Обработчик для пункта меню 'Рисовать' -> 'Один объект'"""
