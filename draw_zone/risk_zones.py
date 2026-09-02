@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QGraphicsPixmapItem
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtCore import Qt, QObject, Signal, QRunnable, QThreadPool, QEventLoop
+from PySide6.QtCore import QObject, Signal, QRunnable
 import numpy as np
 from shapely import distance as shapely_distance, points as shapely_points
 from shapely.geometry import Point, LineString, Polygon
@@ -43,28 +43,38 @@ class RadiationWorker(QRunnable):
 
     def run(self):
         try:
-            R6 = int(self.object_in_table['R6'])
-            if R6 <= 0:
-                raise ValueError("Радиус R6 должен быть больше нуля")
-
-            obj = self.create_shapely_object()
-            x_min, y_min, x_max, y_max = self._calculation_bounds(obj, R6)
-
-            if x_min > x_max or y_min > y_max:
-                result = (0, 0, np.zeros((0, 0), dtype=np.float64))
-            else:
-                result = (
-                    x_min,
-                    y_min,
-                    self._calculate_fragment(obj, R6, x_min, y_min, x_max, y_max)
-                )
-
+            result = self.calculate()
         except Exception as e:
             self.signals.error.emit(str(e))
         else:
             self.signals.result.emit(result)
         finally:
             self.signals.finished.emit()
+
+    def calculate(self) -> tuple[int, int, np.ndarray]:
+        """Вычисляет фрагмент зоны риска для одного объекта."""
+        radius = int(self.object_in_table['R6'])
+        if radius <= 0:
+            raise ValueError("Радиус R6 должен быть больше нуля")
+
+        obj = self.create_shapely_object()
+        x_min, y_min, x_max, y_max = self._calculation_bounds(obj, radius)
+
+        if x_min > x_max or y_min > y_max:
+            return 0, 0, np.zeros((0, 0), dtype=np.float64)
+
+        return (
+            x_min,
+            y_min,
+            self._calculate_fragment(
+                obj,
+                radius,
+                x_min,
+                y_min,
+                x_max,
+                y_max
+            )
+        )
 
     def _calculation_bounds(self, obj, radius: int) -> tuple[int, int, int, int]:
         """Возвращает ограниченную планом область возможного воздействия."""
@@ -134,10 +144,7 @@ class RadiationWorker(QRunnable):
 class RiskCalculator:
     def __init__(self, main_window):
         self.main_window = main_window
-        self.thread_pool = QThreadPool()
         self.heatmap = np.zeros((1, 1))
-        self.pending_workers = 0
-        self.wait_loop = None
 
     def calculate_risk(self, objects):
         """Вычисляет зоны риска для списка объектов"""
@@ -146,9 +153,6 @@ class RiskCalculator:
         height = int(scene_rect.height())
 
         self.heatmap = np.zeros((height, width))
-
-        self.pending_workers = len(objects)
-        self.wait_loop = QEventLoop()
 
         for obj in objects:
             # Преобразуем Object в словарь
@@ -171,18 +175,7 @@ class RiskCalculator:
                 self.main_window.scale_for_plan,
                 blurring=1
             )
-            worker.signals.result.connect(
-                self.worker_output,
-                Qt.ConnectionType.QueuedConnection
-            )
-            worker.signals.finished.connect(
-                self.worker_complete,
-                Qt.ConnectionType.QueuedConnection
-            )
-            self.thread_pool.start(worker)
-
-        if self.pending_workers:
-            self.wait_loop.exec()
+            self.worker_output(worker.calculate())
 
         return self.create_risk_pixmap(self.heatmap)
 
@@ -192,12 +185,6 @@ class RiskCalculator:
         height, width = result_array.shape
         if height and width:
             self.heatmap[y_min:y_min + height, x_min:x_min + width] += result_array
-
-    def worker_complete(self):
-        """Обработка завершения worker'а"""
-        self.pending_workers -= 1
-        if self.pending_workers == 0 and self.wait_loop is not None:
-            self.wait_loop.quit()
 
     def create_risk_pixmap(self, heatmap):
         bins = np.array([i * np.max(heatmap) / 30 for i in range(1, 31)])
