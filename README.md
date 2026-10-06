@@ -34,6 +34,7 @@ IRIS Draw is a desktop application for working with facility maps and managing i
   - All objects simultaneously
   - Risk assessment visualization
 - Scale measurement and calibration tools
+- Measured scale (meters per pixel) is saved separately for each plan and restored whenever that plan is opened, including after an application restart
 - Length and area measurement tools
 - For all-object isolines, overlapping zones are merged separately for each R1–R6 level, hiding boundaries inside overlaps while preserving separate zones and boundaries of different levels
 
@@ -87,6 +88,11 @@ python main.py
 3. Set the scale using the scale measurement tool
 4. Add objects to the plan
 5. Analyze impact zones and risks
+
+### Saved Plan Scale
+After measuring a known distance on a plan, its scale is saved automatically in the database. Switching between plans or restarting the application does not require recalibrating an already measured plan. New plans remain uncalibrated until their first measurement.
+
+Existing databases need one calibration per old plan: earlier versions stored `1.0` as a placeholder and did not save measured values. The application converts that placeholder to an unset scale once when upgrading the database. A newly measured scale of exactly 1 meter per pixel is saved and restored normally.
 
 ### Automatic Database Connection
 The application uses the only `.db`, `.sqlite`, or `.sqlite3` file in its directory, including files with uppercase extensions. If none exists, it creates `iris.db`. If multiple databases are found, startup reports their names instead of choosing one arbitrarily; leave only the database you use in the application directory.

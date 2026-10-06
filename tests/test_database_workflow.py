@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QMenu
 
 from iris_db.database import DatabaseManager
 from iris_db.models import Image, Object, ObjectType, Coordinate
+from iris_db.schema import CREATE_TABLES_SQL
 from main import MainWindow
 from service.database_handler import DatabaseHandler, get_database_path
 
@@ -131,6 +132,51 @@ class DatabaseTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 add_object(db, 999)
 
+    def test_legacy_placeholder_is_migrated_once_without_losing_data(self):
+        path = self.directory / "legacy.db"
+        conn = sqlite3.connect(str(path))
+        conn.executescript(CREATE_TABLES_SQL)
+        conn.executemany(
+            "INSERT INTO images (file_name, image_data, scale) VALUES (?, ?, ?)",
+            [("old.jpg", b"old image", 1.0), ("known.jpg", b"known image", 0.25)]
+        )
+        conn.execute("INSERT INTO objects (image_id, name, object_type) VALUES (1, 'Object', 'point')")
+        conn.execute("INSERT INTO coordinates (object_id, x, y, order_index) VALUES (1, 10, 20, 0)")
+        conn.commit()
+        conn.close()
+        with DatabaseManager(str(path)) as db:
+            self.assertIsNone(db.images.get_scale(1))
+            self.assertEqual(db.images.get_scale(2), 0.25)
+            self.assertEqual(db.images.get_image_data(1), b"old image")
+            self.assertIsNotNone(db.objects.get_by_id(1))
+            self.assertEqual(len(db.coordinates.get_by_object_id(1)), 1)
+            db.images.set_scale(1, 1.0)
+        with DatabaseManager(str(path)) as db:
+            self.assertEqual(db.images.get_scale(1), 1.0)
+
+    def test_scale_update_preserves_image_objects_and_coordinate_ids(self):
+        path = self.directory / "test.db"
+        with DatabaseManager(str(path)) as db:
+            image_id = add_plan(db, b"original image")
+            object_id = add_object(db, image_id)
+            coords_before = db.conn.execute("SELECT * FROM coordinates").fetchall()
+            db.images.set_scale(image_id, 0.125)
+            self.assertEqual(db.images.get_scale(image_id), 0.125)
+            self.assertEqual(db.images.get_image_data(image_id), b"original image")
+            self.assertEqual(db.objects.get_by_image_id(image_id)[0].id, object_id)
+            self.assertEqual(db.conn.execute("SELECT * FROM coordinates").fetchall(), coords_before)
+
+    def test_invalid_scales_do_not_replace_a_saved_value(self):
+        with DatabaseManager(str(self.directory / "test.db")) as db:
+            image_id = add_plan(db)
+            db.images.set_scale(image_id, 0.25)
+            for scale in (0, -1, float("nan"), float("inf")):
+                with self.subTest(scale=scale), self.assertRaises(ValueError):
+                    db.images.set_scale(image_id, scale)
+                self.assertEqual(db.images.get_scale(image_id), 0.25)
+            with self.assertRaisesRegex(ValueError, "не найден"):
+                db.images.set_scale(999, 0.5)
+
 
 class WindowTests(unittest.TestCase):
     @classmethod
@@ -155,6 +201,13 @@ class WindowTests(unittest.TestCase):
             self.window.add_plan()
         self.assertIsNotNone(self.window.current_image_id)
         return self.window.current_image_id
+
+    def measure_scale(self, real_distance, accepted=True, same_point=False):
+        self.window.view.scale_mode = True
+        self.window.view.scale_points = [QPointF(10, 10), QPointF(10 if same_point else 110, 10)]
+        with patch("main.QInputDialog.getDouble", return_value=(real_distance, accepted)) as dialog:
+            self.window.view._finish_scale_measurement()
+        return dialog
 
     def test_startup_connects_and_database_menu_has_no_file_picker(self):
         self.assertEqual(self.window.db_handler.current_db_path, str(self.path))
@@ -241,6 +294,90 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(self.window.current_image_id, image_id)
         with DatabaseManager(str(self.path)) as db:
             self.assertEqual(len(db.images.get_all()), 1)
+
+    def test_new_plan_starts_without_a_measured_scale(self):
+        image_id = self.import_plan()
+        self.assertIsNone(self.window.scale_for_plan)
+        with DatabaseManager(str(self.path)) as db:
+            self.assertIsNone(db.images.get_scale(image_id))
+
+    def test_measured_scale_is_saved_and_restored_for_each_plan(self):
+        first_id = self.import_plan()
+        self.measure_scale(25)
+        self.assertEqual(self.window.scale_for_plan, 0.25)
+        second_id = self.import_plan()
+        self.assertIsNone(self.window.scale_for_plan)
+        self.measure_scale(10)
+        self.assertEqual(self.window.scale_for_plan, 0.1)
+        self.assertTrue(self.window.load_plan(first_id))
+        self.assertEqual(self.window.scale_for_plan, 0.25)
+        self.assertTrue(self.window.load_plan(second_id))
+        self.assertEqual(self.window.scale_for_plan, 0.1)
+        with DatabaseManager(str(self.path)) as db:
+            self.assertEqual(db.images.get_scale(first_id), 0.25)
+            self.assertEqual(db.images.get_scale(second_id), 0.1)
+
+    def test_scale_is_restored_after_application_restart(self):
+        image_id = self.import_plan()
+        self.measure_scale(25)
+        self.window.close()
+        with patch("service.database_handler.get_database_path", return_value=self.path):
+            reopened = MainWindow()
+        self.addCleanup(reopened.close)
+        self.assertTrue(reopened.load_plan(image_id))
+        self.assertEqual(reopened.scale_for_plan, 0.25)
+
+    def test_an_actual_scale_of_one_is_saved_and_restored(self):
+        image_id = self.import_plan()
+        self.measure_scale(100)
+        self.assertEqual(self.window.scale_for_plan, 1.0)
+        self.import_plan()
+        self.assertTrue(self.window.load_plan(image_id))
+        self.assertEqual(self.window.scale_for_plan, 1.0)
+
+    def test_canceled_scale_measurement_keeps_the_previous_value(self):
+        image_id = self.import_plan()
+        self.measure_scale(25)
+        self.measure_scale(50, accepted=False)
+        self.assertEqual(self.window.scale_for_plan, 0.25)
+        self.assertFalse(self.window.view.scale_mode)
+        self.assertEqual(self.window.view.scale_points, [])
+        with DatabaseManager(str(self.path)) as db:
+            self.assertEqual(db.images.get_scale(image_id), 0.25)
+
+    def test_coincident_measurement_points_do_not_change_scale(self):
+        image_id = self.import_plan()
+        self.measure_scale(25)
+        dialog = self.measure_scale(50, same_point=True)
+        dialog.assert_not_called()
+        self.assertEqual(self.window.scale_for_plan, 0.25)
+        self.assertFalse(self.window.view.scale_mode)
+        with DatabaseManager(str(self.path)) as db:
+            self.assertEqual(db.images.get_scale(image_id), 0.25)
+
+    def test_failed_scale_write_keeps_previous_scale_in_view_and_database(self):
+        image_id = self.import_plan()
+        self.measure_scale(25)
+        with DatabaseManager(str(self.path)) as db:
+            db.conn.execute("""
+                CREATE TRIGGER prevent_scale_change BEFORE UPDATE OF scale ON images
+                BEGIN SELECT RAISE(ABORT, 'blocked'); END
+            """)
+            db.conn.commit()
+        with patch("main.QMessageBox.warning") as warning:
+            self.measure_scale(50)
+        warning.assert_called_once()
+        self.assertEqual(self.window.scale_for_plan, 0.25)
+        with DatabaseManager(str(self.path)) as db:
+            self.assertEqual(db.images.get_scale(image_id), 0.25)
+
+    def test_clearing_the_drawing_preserves_saved_scale(self):
+        image_id = self.import_plan()
+        self.measure_scale(25)
+        self.assertTrue(self.window.clear_plan())
+        self.assertEqual(self.window.scale_for_plan, 0.25)
+        self.assertTrue(self.window.load_plan(image_id))
+        self.assertEqual(self.window.scale_for_plan, 0.25)
 
 
 if __name__ == "__main__":

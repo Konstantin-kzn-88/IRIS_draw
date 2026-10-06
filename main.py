@@ -151,28 +151,29 @@ class ScaleGraphicsView(QGraphicsView):
             self.temp_line = None
         if self.scale_line:
             self.scene().removeItem(self.scale_line)
+            self.scale_line = None
 
-        line = QLineF(self.scale_points[0], self.scale_points[1])
-        self.scale_line = QGraphicsLineItem(line)
-        pixels_length = line.length()
+        try:
+            pixels_length = QLineF(self.scale_points[0], self.scale_points[1]).length()
+            if pixels_length <= 0:
+                self.parent.statusBar().showMessage(
+                    "Для измерения масштаба выберите две разные точки", self.parent.time_status
+                )
+                return
 
-        real_distance, ok = QInputDialog.getDouble(
-            self,
-            "Введите расстояние",
-            "Укажите реальное расстояние в метрах:",
-            1.0, 0.1, 10000.0, 2
-        )
-
-        if ok:
-            scale = real_distance / pixels_length
-            self.parent.statusBar().showMessage(
-                f"Масштаб: 1 пиксель = {scale:.3f} метров"
+            real_distance, ok = QInputDialog.getDouble(
+                self,
+                "Введите расстояние",
+                "Укажите реальное расстояние в метрах:",
+                1.0, 0.1, 10000.0, 2
             )
-            self.parent.scale_for_plan = scale
 
-        self.scale_mode = False
-        self.setCursor(Qt.ArrowCursor)
-        self.scale_points.clear()
+            if ok:
+                self.parent.set_plan_scale(real_distance / pixels_length)
+        finally:
+            self.scale_mode = False
+            self.setCursor(Qt.ArrowCursor)
+            self.scale_points.clear()
 
     def mouseReleaseEvent(self, event):
         """Обработка отпускания кнопки мыши"""
@@ -639,6 +640,27 @@ class MainWindow(QMainWindow):
         self.view.setMouseTracking(True)
         self.view.setCursor(Qt.ArrowCursor)
 
+    def set_plan_scale(self, scale: float) -> bool:
+        """Сохраняет измеренный масштаб текущего генплана в базе данных."""
+        if not self.current_image_id or not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Сначала выберите план", self.time_status)
+            return False
+
+        try:
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                db.images.set_scale(self.current_image_id, scale)
+            self.scale_for_plan = float(scale)
+            self.statusBar().showMessage(
+                f"Масштаб сохранен: 1 пиксель = {self.scale_for_plan:g} м",
+                self.time_status
+            )
+            return True
+        except Exception as e:
+            message = f"Не удалось сохранить масштаб: {e}"
+            self.statusBar().showMessage(message, self.time_status)
+            QMessageBox.warning(self, "Ошибка сохранения масштаба", message)
+            return False
+
     def _clear_all_plans(self):
         """Удаляет все генпланы и связанные данные, затем сжимает базу."""
         if not self.db_handler.current_db_path:
@@ -1095,6 +1117,7 @@ class MainWindow(QMainWindow):
         try:
             with DatabaseManager(self.db_handler.current_db_path) as db:
                 image_data = db.images.get_image_data(plan_id)
+                saved_scale = db.images.get_scale(plan_id)
                 if image_data:
                     pixmap = QPixmap()
                     if not pixmap.loadFromData(image_data):
@@ -1102,6 +1125,7 @@ class MainWindow(QMainWindow):
 
                     self._reset_plan_view()
                     self.current_image_id = plan_id
+                    self.scale_for_plan = saved_scale
                     self.scene.addPixmap(pixmap)
 
                     # Устанавливаем сцену по размеру изображения
@@ -1111,7 +1135,13 @@ class MainWindow(QMainWindow):
                     self.view.centerOn(self.scene.sceneRect().center())
 
                     self.load_objects_from_image(plan_id)
-                    self.statusBar().showMessage("План успешно загружен", 3000)
+                    scale_message = (
+                        f"Масштаб: 1 пиксель = {saved_scale:g} м"
+                        if saved_scale is not None else "Задайте масштаб плана"
+                    )
+                    self.statusBar().showMessage(
+                        f"План успешно загружен. {scale_message}", self.time_status
+                    )
                     return True
                 else:
                     self.statusBar().showMessage("План не найден", 3000)

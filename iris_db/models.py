@@ -68,7 +68,7 @@ class Image:
     updated_at: Optional[datetime] = None
 
     @classmethod
-    def from_file(cls, file_path: Union[str, Path], scale: float = 1.0) -> 'Image':
+    def from_file(cls, file_path: Union[str, Path], scale: Optional[float] = None) -> 'Image':
         """Создает объект Image из файла изображения"""
         file_path = Path(file_path)
         if not file_path.exists():

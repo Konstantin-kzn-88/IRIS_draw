@@ -1,4 +1,5 @@
 import sqlite3
+import math
 from typing import List, Optional
 from datetime import datetime
 from iris_db.models import Image, Object, Coordinate, ObjectType
@@ -172,6 +173,30 @@ class ImageRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
         self.object_repo = ObjectRepository(conn)
+
+    def get_scale(self, image_id: int) -> Optional[float]:
+        """Возвращает измеренный масштаб в метрах на пиксель или None."""
+        row = self.conn.execute("SELECT scale FROM images WHERE id=?", (image_id,)).fetchone()
+        if not row or row[0] is None:
+            return None
+        try:
+            scale = float(row[0])
+        except (TypeError, ValueError):
+            return None
+        return scale if math.isfinite(scale) and scale > 0 else None
+
+    def set_scale(self, image_id: int, scale: float) -> None:
+        """Сохраняет только масштаб плана, не изменяя изображение и объекты."""
+        scale = float(scale)
+        if not math.isfinite(scale) or scale <= 0:
+            raise ValueError("Масштаб должен быть конечным числом больше нуля")
+        with self.conn:
+            cursor = self.conn.execute(
+                "UPDATE images SET scale=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (scale, image_id)
+            )
+            if cursor.rowcount == 0:
+                raise ValueError("План не найден в базе данных")
 
     def create(self, image: Image) -> int:
         cursor = self.conn.cursor()

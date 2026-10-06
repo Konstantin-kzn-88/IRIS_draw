@@ -72,7 +72,7 @@ class DatabaseHandler:
         try:
             with DatabaseManager(self.current_db_path) as db:
                 # Загружаем изображение из файла
-                image = Image.from_file(plan_path, scale=1.0)
+                image = Image.from_file(plan_path, scale=None)
                 # Сохраняем изображение в базу данных
                 image_id = db.images.create(image)
                 print(f"Created image with ID: {image_id}")

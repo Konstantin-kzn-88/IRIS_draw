@@ -35,6 +35,15 @@ class DatabaseManager:
         cursor.executescript(CREATE_TABLES_SQL)
         self.conn.commit()
 
+        # До версии 1 импорт записывал 1.0 как служебное значение, а результат
+        # измерения масштаба не сохранялся. Выполняем преобразование один раз,
+        # чтобы новые измерения ровно 1 м/пиксель оставались действительными.
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < 1:
+            with self.conn:
+                self.conn.execute("UPDATE images SET scale = NULL WHERE scale = 1.0")
+                self.conn.execute("PRAGMA user_version = 1")
+
     def close(self):
         """Закрывает соединение с базой данных"""
         self.conn.close()
