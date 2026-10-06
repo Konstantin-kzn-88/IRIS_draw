@@ -5,12 +5,13 @@ IRIS Draw is a desktop application for working with facility maps and managing i
 ## Features
 
 ### Database Operations
-- Create new SQLite databases
-- Connect to existing databases 
+- Automatically connect to the single SQLite database next to `main.py` (or the packaged executable), regardless of the working directory
+- Create `iris.db` automatically when no database is present
+- Clear all facility plans, their objects and coordinates, then automatically compact the database (VACUUM)
 - Database optimization (VACUUM)
 
 ### Plan Management
-- Add new facility plans (supports JPG format)
+- Add new facility plans and immediately make them active (supports JPG format)
 - Select and load existing plans
 - Replace plans while preserving objects
 - Clear plans
@@ -80,11 +81,17 @@ python main.py
 ## Usage Guide
 
 ### Basic Workflow
-1. Create or connect to a database
-2. Add or select a facility plan
+1. Keep your database next to `main.py` (or the packaged executable); it connects automatically on startup
+2. Add a facility plan (it becomes active immediately), or select an existing plan
 3. Set the scale using the scale measurement tool
 4. Add objects to the plan
 5. Analyze impact zones and risks
+
+### Automatic Database Connection
+The application uses the only `.db`, `.sqlite`, or `.sqlite3` file in its directory, including files with uppercase extensions. If none exists, it creates `iris.db`. If multiple databases are found, startup reports their names instead of choosing one arbitrarily; leave only the database you use in the application directory.
+
+### Clearing All Plans
+Use **Файл → База данных → Очистить все ген.планы** and confirm the deletion. This removes every plan and its associated objects and coordinates, clears the active plan, and runs VACUUM to reclaim disk space. If compaction fails after deletion, the application reports that the plans have already been deleted; **Оптимизировать (VACUUM)** remains available to retry compaction.
 
 ### Adding Objects
 1. Select the object type from the "Objects" menu
@@ -142,6 +149,12 @@ IRIS_0/
 ```
 
 ## Contributing
+
+Run the database and plan workflow regression checks (temporary databases, offscreen Qt):
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 Contributions are welcome! Please feel free to submit pull requests or create issues for bugs and feature requests.
 

@@ -282,6 +282,7 @@ class MainWindow(QMainWindow):
 
         # Создание меню
         self.create_menu()
+        self._connect_database()
 
     def __set_ico(self):
         main_ico = QIcon('main_ico.ico')
@@ -480,26 +481,21 @@ class MainWindow(QMainWindow):
         file_menu.addMenu(database_menu)
 
         # Создание действий для работы с базой данных
-        create_action = QAction("Создать", self)
-        create_action.setIcon(QIcon("ico/plus.png"))
-        connect_action = QAction("Подключиться", self)
-        connect_action.setIcon(QIcon("ico/connect.png"))
+        clear_action = QAction("Очистить все ген.планы", self)
+        clear_action.setIcon(QIcon("ico/clear.png"))
         vacuum_action = QAction("Оптимизировать (VACUUM)", self)
         vacuum_action.setIcon(QIcon("ico/vacuum.png"))
 
         # Установка идентификаторов
-        create_action.setObjectName("create_action")
-        connect_action.setObjectName("connect_action")
+        clear_action.setObjectName("clear_plans_action")
         vacuum_action.setObjectName("vacuum_action")
 
         # Добавление действий в меню
-        database_menu.addAction(create_action)
-        database_menu.addAction(connect_action)
+        database_menu.addAction(clear_action)
         database_menu.addAction(vacuum_action)
 
         # Привязка обработчиков
-        create_action.triggered.connect(self._create_database)
-        connect_action.triggered.connect(self._connect_database)
+        clear_action.triggered.connect(self._clear_all_plans)
         vacuum_action.triggered.connect(self._vacuum_database)
 
     def _create_plan_menu(self, plan_menu):
@@ -600,19 +596,86 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, t=obj_type: self.start_drawing_object(t))
             objects_menu.addAction(action)
 
-    def _create_database(self):
-        """Обработчик создания новой базы данных"""
-        if self.db_handler.create_database():
-            self.statusBar().showMessage("База данных успешно создана", self.time_status)
-        else:
-            self.statusBar().showMessage("Ошибка при создании базы данных", self.time_status)
-
     def _connect_database(self):
-        """Обработчик подключения к существующей базе данных"""
+        """Автоматическое подключение при запуске приложения."""
         if self.db_handler.connect_to_database():
-            self.statusBar().showMessage("Подключение к базе данных выполнено успешно", self.time_status)
+            self.statusBar().showMessage(
+                f"Подключена база данных: {self.db_handler.current_db_path}",
+                self.time_status
+            )
         else:
             self.statusBar().showMessage("Ошибка при подключении к базе данных", self.time_status)
+            QMessageBox.critical(
+                self, "Ошибка подключения к базе данных", self.db_handler.last_error
+            )
+
+    def _reset_plan_view(self):
+        """Очищает план и отменяет действия, связанные с прежней сценой."""
+        self.edit_coordinates_manager.cancel_editing()
+        self.object_manager.temp_drawing.clear_temp_items()
+        self.object_manager.is_drawing = False
+        self.object_manager.current_object = None
+        self.object_manager.current_object_type = None
+        self.object_manager.temp_coordinates = []
+        self.measurement_tools._finish_measurement()
+        self.measurement_tools.measure_type = None
+
+        for item in self.object_items.values():
+            if item:
+                item.cleanup()
+        self.object_items.clear()
+        self.object_table.clear_table()
+        self.scene.clear()
+        self.scene.setSceneRect(QRectF())
+        self.current_image_id = None
+        self.scale_for_plan = None
+        self.view.scale_mode = False
+        self.view.scale_points.clear()
+        self.view.scale_line = None
+        self.view.temp_line = None
+        self.view.panning = False
+        self.view.last_mouse_pos = None
+        self.view.reset_scale()
+        self.view.setMouseTracking(True)
+        self.view.setCursor(Qt.ArrowCursor)
+
+    def _clear_all_plans(self):
+        """Удаляет все генпланы и связанные данные, затем сжимает базу."""
+        if not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Нет подключения к базе данных", self.time_status)
+            return False
+
+        confirmation = QMessageBox.question(
+            self,
+            "Очистить все ген.планы",
+            "Удалить все ген.планы из базы данных?\n"
+            "Все связанные объекты и координаты также будут удалены.\n"
+            "После удаления база данных будет автоматически сжата.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if confirmation != QMessageBox.Yes:
+            return False
+
+        plans_deleted = False
+        try:
+            with DatabaseManager(self.db_handler.current_db_path) as db:
+                db.clear_plans()
+                plans_deleted = True
+                self._reset_plan_view()
+                db.vacuum()
+            self.statusBar().showMessage(
+                "Все ген.планы удалены. База данных сжата.", self.time_status
+            )
+            return True
+        except Exception as e:
+            message = (
+                f"Ген.планы удалены, но завершить очистку и сжатие не удалось: {e}"
+                if plans_deleted else f"Не удалось удалить ген.планы: {e}"
+            )
+            self.statusBar().showMessage(message, self.time_status)
+            QMessageBox.warning(self, "Ошибка очистки базы данных", message)
+            return False
 
     def _vacuum_database(self):
         """Обработчик оптимизации базы данных"""
@@ -854,23 +917,7 @@ class MainWindow(QMainWindow):
                 # (связанные объекты удалятся автоматически благодаря ON DELETE CASCADE)
                 db.images.delete(self.current_image_id)
 
-            # Очищаем графическую сцену
-            self.scene.clear()
-
-            # Очищаем таблицу объектов
-            self.object_table.clear_table()
-
-            # Очищаем словарь графических элементов
-            for item in self.object_items.values():
-                if item:
-                    item.cleanup()
-            self.object_items.clear()
-
-            # Сбрасываем текущий ID плана
-            self.current_image_id = None
-
-            # Сбрасываем масштаб
-            self.scale_for_plan = None
+            self._reset_plan_view()
 
             self.statusBar().showMessage("План и связанные объекты успешно удалены", 3000)
             return True
@@ -993,6 +1040,10 @@ class MainWindow(QMainWindow):
 
     def add_plan(self):
         """Добавление нового плана в базу данных"""
+        if not self.db_handler.current_db_path:
+            self.statusBar().showMessage("Нет подключения к базе данных", self.time_status)
+            return
+
         plan_path, _ = QFileDialog.getOpenFileName(
             self,
             "Выбрать план",
@@ -1005,27 +1056,21 @@ class MainWindow(QMainWindow):
                 with open(plan_path, 'rb') as file:
                     image_data = file.read()
 
+                pixmap = QPixmap()
+                if not pixmap.loadFromData(image_data):
+                    raise ValueError("Выбранный файл не является изображением")
+
                 plan_name = os.path.basename(plan_path)
                 image_id = self.db_handler.save_plan(plan_name, image_data, plan_path)
 
                 if image_id:
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(image_data)
-
-                    self.scene.clear()
-                    self.scene.addPixmap(pixmap)
-                    self.view.fitInView(
-                        self.scene.sceneRect(),
-                        Qt.AspectRatioMode.KeepAspectRatio
-                    )
-
-                    self.statusBar().showMessage(
-                        f"План '{plan_name}' успешно добавлен",
-                        3000
-                    )
-
-                    if image_id:
-                        self.load_objects_from_image(image_id)
+                    if self.load_plan(image_id):
+                        self.statusBar().showMessage(
+                            f"План '{plan_name}' добавлен и выбран активным",
+                            3000
+                        )
+                else:
+                    self.statusBar().showMessage("Не удалось сохранить план", self.time_status)
 
             except Exception as e:
                 self.statusBar().showMessage(
@@ -1051,16 +1096,13 @@ class MainWindow(QMainWindow):
             with DatabaseManager(self.db_handler.current_db_path) as db:
                 image_data = db.images.get_image_data(plan_id)
                 if image_data:
-                    self.current_image_id = plan_id
-
                     pixmap = QPixmap()
-                    pixmap.loadFromData(image_data)
+                    if not pixmap.loadFromData(image_data):
+                        raise ValueError("Не удалось загрузить изображение плана")
 
-                    self.scene.clear()
+                    self._reset_plan_view()
+                    self.current_image_id = plan_id
                     self.scene.addPixmap(pixmap)
-
-                    # Сбрасываем масштаб к 100%
-                    self.view.reset_scale()
 
                     # Устанавливаем сцену по размеру изображения
                     self.scene.setSceneRect(pixmap.rect())
@@ -1070,11 +1112,13 @@ class MainWindow(QMainWindow):
 
                     self.load_objects_from_image(plan_id)
                     self.statusBar().showMessage("План успешно загружен", 3000)
+                    return True
                 else:
                     self.statusBar().showMessage("План не найден", 3000)
         except Exception as e:
             self.statusBar().showMessage(f"Ошибка при загрузке плана: {str(e)}", 3000)
             print(f"Подробности ошибки: {e}")
+        return False
 
 
     def load_objects_from_image(self, image_id):
