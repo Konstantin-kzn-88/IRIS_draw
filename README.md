@@ -35,6 +35,7 @@ IRIS Draw is a desktop application for working with facility maps and managing i
   - Risk assessment visualization
 - Scale measurement and calibration tools
 - Length and area measurement tools
+- For all-object isolines, overlapping zones are merged separately for each R1–R6 level, hiding boundaries inside overlaps while preserving separate zones and boundaries of different levels
 
 ### Interface Features
 - Intuitive graphical interface

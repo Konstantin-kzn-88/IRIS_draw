@@ -6,7 +6,7 @@ from iris_db.models import Object
 
 
 class AllImpactRenderer(IsolineRenderer):
-    """Отрисовка изолиний для всех объектов на плане."""
+    """Отрисовка объединенных изолиний для всех объектов на плане."""
 
     def __init__(
         self,

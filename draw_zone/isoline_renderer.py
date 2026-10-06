@@ -98,7 +98,30 @@ class IsolineRenderer:
         if radius <= 0:
             return
 
-        path = self._zone_path(obj, radius / scale)
+        self._draw_zone_path(self._zone_path(obj, radius / scale), painter, zone)
+
+    def _combined_zone_path(
+        self,
+        objects: list[Object],
+        zone: str,
+        scale: float,
+    ) -> QPainterPath:
+        """Объединяет площади одного уровня, удаляя границы внутри перекрытий."""
+        combined_path = QPainterPath()
+        for obj in objects:
+            radius = float(getattr(obj, zone))
+            if radius <= 0:
+                continue
+            path = self._zone_path(obj, radius / scale)
+            combined_path = path if combined_path.isEmpty() else combined_path.united(path)
+        return combined_path
+
+    def _draw_zone_path(
+        self,
+        path: QPainterPath,
+        painter: QPainter,
+        zone: str,
+    ) -> None:
         pen = QPen(self.zone_colors[zone])
         pen.setWidthF(self.line_width)
         pen.setCapStyle(Qt.RoundCap)
@@ -126,11 +149,14 @@ class IsolineRenderer:
         painter = QPainter(image)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        for zone in ZONE_ORDER:
-            for obj in objects:
-                self.draw_object_zone(obj, painter, zone, scale)
-
-        painter.end()
+        try:
+            for zone in ZONE_ORDER:
+                # Рисуем границу объединенной площади, а не контуры объектов
+                # по отдельности: иначе в пересечениях остаются внутренние линии.
+                path = self._combined_zone_path(objects, zone, scale)
+                self._draw_zone_path(path, painter, zone)
+        finally:
+            painter.end()
 
         item = QGraphicsPixmapItem(QPixmap.fromImage(image))
         item.setOpacity(1.0)
