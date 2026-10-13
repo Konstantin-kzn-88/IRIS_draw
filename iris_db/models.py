@@ -40,7 +40,7 @@ class Object:
     def validate_coordinates(self) -> bool:
         """Проверяет корректность координат в зависимости от типа объекта"""
         if self.object_type == ObjectType.POINT:
-            return len(self.coordinates) >= 1
+            return len(self.coordinates) == 1
 
         elif self.object_type == ObjectType.LINEAR:
             return len(self.coordinates) >= 2

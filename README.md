@@ -24,7 +24,7 @@ IRIS Draw is a desktop application for working with facility maps and managing i
   - Linear objects
   - Stationary objects
 - Add objects with custom parameters (R1-R6 values)
-- Place an array of independent points in one operation, stored as one point object with shared R1-R6 values
+- Place multiple independent point objects in one operation, each with its own R1-R6 values
 - Edit object coordinates
 - Delete objects
 - Real-time object highlighting and visualization
@@ -110,9 +110,11 @@ Use **Файл → База данных → Очистить все ген.пл
 ### Point Arrays
 Use **Рисовать → Объекты → Ввести массив точек**, then click each location on the plan. Temporary points appear immediately without connecting lines. Press **Enter** or double-click the last location to save the whole array; press **Esc** to cancel. A double-click does not duplicate the last point. An empty array is not saved.
 
-Each array occupies one table row, automatically named `массив_1`, `массив_2`, etc. within the active plan. Rename it and set the shared R1-R6 values in the table. Every coordinate is saved in the existing coordinates table, restored on reopening, and highlighted when the array is selected. Existing single point objects continue to work.
+Each click creates a separate point object with its own table row, automatically named `массив_1`, `массив_2`, etc. within the active plan. Rename each point and set its individual R1-R6 values in the table. Points are saved together in one transaction; an error rolls back the whole batch. Every point is restored on reopening and can be selected, moved or deleted independently.
 
-**Редактировать координаты** replaces an array's points with a new set of clicks, finished by Enter or a double-click; Esc retains the saved coordinates. Isolines and filled zones include all points. Same-level overlapping isolines are merged. Distance tables use the nearest pair of points, while risk visualization sums the contributions of all points, as it does for individually entered objects.
+Use **Редактировать координаты** to move the selected point with one click. Isolines, filled zones, distance tables and risk visualization treat each point as an independent object with its own radii. Same-level overlapping isolines are merged.
+
+Groups saved by the earlier point-array version are automatically split into independent point objects when the database is opened. Coordinates, their IDs, existing radii, image data and calibrated scales are retained. Each resulting point initially receives the former group's radii and can then be edited independently.
 
 ### Measuring Tools
 1. Select the measurement tool (length or area)

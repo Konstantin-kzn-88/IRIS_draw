@@ -12,7 +12,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QAction, QColor, QImage
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QGraphicsEllipseItem, QGraphicsScene
+from PySide6.QtWidgets import QApplication, QGraphicsEllipseItem, QGraphicsScene, QMessageBox
 
 from draw_zone.filled_zone_renderer import FilledZoneRenderer
 from draw_zone.impact_zones import ImpactZoneRenderer
@@ -43,51 +43,125 @@ class PointArrayDatabaseTests(unittest.TestCase):
     def test_round_trip_and_delete_all_coordinates(self):
         points = [(1.25, 2.5), (11.5, 22.75), (100, 110)]
         with DatabaseManager(self.path) as db:
-            obj = point_object(points, self.image_id, R6=30)
-            object_id = db.objects.create(obj)
+            objects = [point_object([point], self.image_id, name=f"массив_{i+1}", R6=30+i)
+                       for i, point in enumerate(points)]
+            ids = db.objects.create_many(objects)
         with DatabaseManager(self.path) as db:
-            saved = db.objects.get_by_id(object_id)
-            self.assertEqual([(c.x, c.y) for c in saved.coordinates], points)
-            self.assertEqual([c.order_index for c in saved.coordinates], [0, 1, 2])
-            self.assertEqual(saved.R6, 30)
-            self.assertEqual(len(db.objects.get_by_image_id(self.image_id)), 1)
-            db.objects.delete(object_id)
-            self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM coordinates").fetchone()[0], 0)
+            saved = db.objects.get_by_image_id(self.image_id)
+            self.assertEqual([(o.coordinates[0].x, o.coordinates[0].y) for o in saved], points)
+            self.assertEqual([o.R6 for o in saved], [30, 31, 32])
+            self.assertTrue(all(len(o.coordinates) == 1 and o.coordinates[0].order_index == 0
+                                for o in saved))
+            db.objects.delete(ids[1])
+            self.assertEqual([o.id for o in db.objects.get_by_image_id(self.image_id)],
+                             [ids[0], ids[2]])
+            self.assertEqual(db.conn.execute("SELECT COUNT(*) FROM coordinates").fetchone()[0], 2)
 
     def test_empty_point_object_is_rejected(self):
         with DatabaseManager(self.path) as db:
             with self.assertRaises(ValueError):
                 db.objects.create(point_object([], self.image_id))
 
-    def reject_second_coordinate(self, db):
+    def reject_coordinate(self, db):
         db.conn.execute("""CREATE TRIGGER reject_coordinate BEFORE INSERT ON coordinates
-                           WHEN NEW.order_index = 1
+                           WHEN NEW.x = 30
                            BEGIN SELECT RAISE(ABORT, 'blocked'); END""")
         db.conn.commit()
 
     def test_failed_array_insert_rolls_back_object_and_every_coordinate(self):
         with DatabaseManager(self.path) as db:
-            self.reject_second_coordinate(db)
+            self.reject_coordinate(db)
             with self.assertRaises(sqlite3.IntegrityError):
-                db.objects.create(point_object([(1, 2), (3, 4)], self.image_id))
+                db.objects.create_many([point_object([(1, 2)], self.image_id),
+                                        point_object([(30, 40)], self.image_id)])
             for table in ("objects", "coordinates"):
                 self.assertEqual(db.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
 
     def test_failed_update_retains_name_radii_and_original_coordinates(self):
         with DatabaseManager(self.path) as db:
-            object_id = db.objects.create(point_object([(1, 2), (3, 4)], self.image_id, R6=50))
+            object_id = db.objects.create(point_object([(1, 2)], self.image_id, R6=50))
             saved = db.objects.get_by_id(object_id)
             before = db.conn.execute("SELECT * FROM coordinates").fetchall()
-            self.reject_second_coordinate(db)
+            self.reject_coordinate(db)
             saved.name = "Changed"
             saved.R6 = 100
-            saved.coordinates = point_object([(10, 20), (30, 40)]).coordinates
+            saved.coordinates = point_object([(30, 40)]).coordinates
             with self.assertRaises(sqlite3.IntegrityError):
                 db.objects.update(saved)
             unchanged = db.objects.get_by_id(object_id)
             self.assertEqual(unchanged.name, "Array")
             self.assertEqual(unchanged.R6, 50)
             self.assertEqual(db.conn.execute("SELECT * FROM coordinates").fetchall(), before)
+
+    def test_invalid_point_in_batch_saves_nothing(self):
+        with DatabaseManager(self.path) as db:
+            with self.assertRaises(ValueError):
+                db.objects.create_many([point_object([(1, 2)], self.image_id),
+                                        point_object([(3, 4), (5, 6)], self.image_id)])
+            self.assertEqual(db.objects.get_by_image_id(self.image_id), [])
+
+    def seed_legacy_group(self, name="массив_1", existing_name="массив_9"):
+        with sqlite3.connect(self.path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO objects (image_id, name, R1, R2, R3, R4, R5, R6, object_type)
+                VALUES (?, ?, 1, 2, 3, 4, 5, 6, 'point')
+            """, (self.image_id, name))
+            group_id = cursor.lastrowid
+            conn.executemany(
+                "INSERT INTO coordinates (object_id, x, y, order_index) VALUES (?, ?, ?, ?)",
+                [(group_id, 10, 20, 0), (group_id, 30, 40, 1), (group_id, 50, 60, 2)]
+            )
+            other = conn.execute(
+                "INSERT INTO objects (image_id, name, object_type) VALUES (?, ?, 'point')",
+                (self.image_id, existing_name)
+            ).lastrowid
+            conn.execute("INSERT INTO coordinates (object_id, x, y, order_index) VALUES (?, 90, 100, 0)",
+                         (other,))
+            conn.execute("UPDATE images SET scale = 0.25 WHERE id = ?", (self.image_id,))
+            conn.execute("PRAGMA user_version = 1")
+            coordinates = conn.execute("SELECT id, x, y FROM coordinates ORDER BY id").fetchall()
+        return group_id, coordinates
+
+    def test_legacy_groups_split_once_preserving_ids_radii_image_and_scale(self):
+        group_id, old_coordinates = self.seed_legacy_group()
+        with DatabaseManager(self.path) as db:
+            points = db.objects.get_by_image_id(self.image_id)
+            self.assertEqual([o.name for o in points],
+                             ["массив_1", "массив_9", "массив_10", "массив_11"])
+            self.assertEqual(points[0].id, group_id)
+            self.assertTrue(all(len(o.coordinates) == 1 for o in points))
+            for point in (points[0], points[2], points[3]):
+                self.assertEqual(tuple(getattr(point, f"R{i}") for i in range(1, 7)),
+                                 (1, 2, 3, 4, 5, 6))
+            self.assertEqual(db.conn.execute("SELECT id, x, y FROM coordinates ORDER BY id").fetchall(),
+                             old_coordinates)
+            self.assertEqual(db.images.get_scale(self.image_id), 0.25)
+            self.assertEqual(db.images.get_image_data(self.image_id), b"image")
+            self.assertEqual(db.conn.execute("PRAGMA user_version").fetchone()[0], 2)
+        with DatabaseManager(self.path) as db:
+            self.assertEqual(len(db.objects.get_by_image_id(self.image_id)), 4)
+
+    def test_legacy_custom_names_do_not_collide_with_existing_points(self):
+        self.seed_legacy_group(name="Скважина", existing_name="Скважина_2")
+        with DatabaseManager(self.path) as db:
+            self.assertEqual([o.name for o in db.objects.get_by_image_id(self.image_id)],
+                             ["Скважина", "Скважина_2", "Скважина_3", "Скважина_4"])
+
+    def test_failed_legacy_split_rolls_back_entire_migration(self):
+        self.seed_legacy_group()
+        with sqlite3.connect(self.path) as conn:
+            before_objects = conn.execute("SELECT * FROM objects").fetchall()
+            before_coordinates = conn.execute("SELECT * FROM coordinates").fetchall()
+            conn.execute("""
+                CREATE TRIGGER reject_move BEFORE UPDATE OF object_id ON coordinates
+                WHEN OLD.order_index = 1 BEGIN SELECT RAISE(ABORT, 'blocked'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            DatabaseManager(self.path)
+        with sqlite3.connect(self.path) as conn:
+            self.assertEqual(conn.execute("SELECT * FROM objects").fetchall(), before_objects)
+            self.assertEqual(conn.execute("SELECT * FROM coordinates").fetchall(), before_coordinates)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
 
 
 class PointArrayWindowTests(unittest.TestCase):
@@ -120,7 +194,7 @@ class PointArrayWindowTests(unittest.TestCase):
             self.window.object_manager.handle_mouse_click(QPointF(x, y))
         QTest.keyClick(self.window.view, Qt.Key_Return)
 
-    def test_menu_clicks_enter_save_one_row_and_show_every_point(self):
+    def test_menu_clicks_enter_save_separate_rows_and_show_every_point(self):
         action = next(a for a in self.window.findChildren(QAction)
                       if a.text() == "Ввести массив точек")
         self.window.show()
@@ -139,13 +213,14 @@ class PointArrayWindowTests(unittest.TestCase):
                                 for i in self.window.object_manager.temp_drawing.temp_items))
             QTest.keyClick(self.window.view, Qt.Key_Return)
             name_dialog.assert_not_called()
-        saved, = self.objects()
-        self.assertEqual(saved.name, "массив_1")
-        self.assertEqual([(c.x, c.y) for c in saved.coordinates], points)
-        self.assertEqual(self.window.object_table.rowCount(), 1)
-        items = self.window.object_items[saved.id].items
-        self.assertEqual(len(items), 3)
-        self.assertTrue(all(i.isVisible() for i in items))
+        saved = self.objects()
+        self.assertEqual([o.name for o in saved], ["массив_1", "массив_2", "массив_3"])
+        self.assertEqual([(o.coordinates[0].x, o.coordinates[0].y) for o in saved], points)
+        self.assertEqual(self.window.object_table.rowCount(), 3)
+        for obj in saved:
+            items = self.window.object_items[obj.id].items
+            self.assertEqual(len(items), 1)
+            self.assertTrue(items[0].isVisible())
         self.assertFalse(self.window.object_manager.is_drawing)
 
     def test_double_click_with_mouse_movement_keeps_last_point_once(self):
@@ -154,7 +229,7 @@ class PointArrayWindowTests(unittest.TestCase):
         manager.handle_mouse_click(QPointF(40, 50))
         manager.handle_mouse_click(QPointF(140, 150))
         manager.handle_mouse_click(QPointF(141, 150), double_click=True)
-        self.assertEqual([(c.x, c.y) for c in self.objects()[0].coordinates],
+        self.assertEqual([(o.coordinates[0].x, o.coordinates[0].y) for o in self.objects()],
                          [(40, 50), (140, 150)])
 
     def test_actual_double_click_event_finishes_input(self):
@@ -166,7 +241,7 @@ class PointArrayWindowTests(unittest.TestCase):
         last = view.mapFromScene(QPointF(150, 160))
         QTest.mouseClick(view.viewport(), Qt.LeftButton, pos=last)
         QTest.mouseDClick(view.viewport(), Qt.LeftButton, pos=last)
-        self.assertEqual(len(self.objects()[0].coordinates), 2)
+        self.assertEqual(len(self.objects()), 2)
         self.assertFalse(self.window.object_manager.is_drawing)
 
     def test_escape_and_empty_enter_do_not_save_and_next_input_is_clean(self):
@@ -187,7 +262,7 @@ class PointArrayWindowTests(unittest.TestCase):
 
     def test_numbering_continues_after_reopening_and_saved_arrays_are_restored(self):
         self.enter_array([(10, 20), (30, 40)])
-        first, = self.objects()
+        first, second = self.objects()
         with DatabaseManager(str(self.path)) as db:
             first.R5, first.R6 = 20, 40
             db.objects.update(first)
@@ -197,31 +272,54 @@ class PointArrayWindowTests(unittest.TestCase):
             self.window = MainWindow()
         self.addCleanup(self.window.close)
         self.assertTrue(self.window.load_plan(self.image_id))
-        first, = self.objects()
-        self.assertEqual(len(self.window.object_items[first.id].items), 2)
+        first, second = self.objects()
+        self.assertEqual(len(self.window.object_items[first.id].items), 1)
         self.assertEqual([c.id for c in first.coordinates], coord_ids)
         self.assertEqual((first.R5, first.R6), (20, 40))
+        self.assertEqual((second.R5, second.R6), (0, 0))
         self.enter_array([(50, 60), (70, 80)])
-        self.assertEqual([o.name for o in self.objects()], ["массив_1", "массив_2"])
+        self.assertEqual([o.name for o in self.objects()],
+                         ["массив_1", "массив_2", "массив_3", "массив_4"])
 
-    def test_edit_array_changes_all_points_and_escape_preserves_them(self):
+    def test_move_and_cancel_affect_only_selected_point(self):
         self.enter_array([(10, 20), (30, 40)])
-        saved, = self.objects()
+        saved, other = self.objects()
+        self.window.object_table.selectRow(0)
         self.window.start_edit_coordinates(saved.id)
         editor = self.window.edit_coordinates_manager
-        self.assertTrue(editor.is_point_array)
-        for x, y in [(50, 60), (70, 80), (90, 100)]:
-            editor.handle_mouse_click(QPointF(x, y))
-        editor.handle_mouse_move(QPointF(150, 150))
-        self.assertTrue(editor.is_editing)
-        QTest.keyClick(self.window.view, Qt.Key_Enter)
-        expected = [(50, 60), (70, 80), (90, 100)]
-        self.assertEqual([(c.x, c.y) for c in self.objects()[0].coordinates], expected)
+        editor.handle_mouse_click(QPointF(50, 60))
+        self.assertFalse(editor.is_editing)
+        expected = [(50, 60), (30, 40)]
+        self.assertEqual([(o.coordinates[0].x, o.coordinates[0].y) for o in self.objects()], expected)
         self.window.start_edit_coordinates(saved.id)
-        editor.handle_mouse_click(QPointF(200, 210))
+        editor.handle_mouse_move(QPointF(200, 210))
         QTest.keyClick(self.window.view, Qt.Key_Escape)
-        self.assertEqual([(c.x, c.y) for c in self.objects()[0].coordinates], expected)
+        self.assertEqual([(o.coordinates[0].x, o.coordinates[0].y) for o in self.objects()], expected)
         self.assertTrue(all(i.isVisible() for i in self.window.object_items[saved.id].items))
+
+    def test_each_point_has_independent_radii_after_table_edits_and_reopening(self):
+        self.enter_array([(60, 100), (260, 100)])
+        expected = [(5, 10, 15, 20, 25, 30), (10, 20, 30, 40, 50, 60)]
+        for row, radii in enumerate(expected):
+            for column, radius in enumerate(radii, start=3):
+                self.window.object_table.item(row, column).setText(str(radius))
+        self.assertTrue(self.window.load_plan(self.image_id))
+        saved = self.objects()
+        self.assertEqual([tuple(getattr(o, f"R{i}") for i in range(1, 7)) for o in saved], expected)
+        self.window.set_plan_scale(1.0)
+        renderer = ImpactZoneRenderer(self.window.scene)
+        image = renderer.render_objects(saved, 1.0).pixmap().toImage()
+        self.assertGreater(image.pixelColor(90, 100).alpha(), 0)
+        self.assertEqual(image.pixelColor(120, 100).alpha(), 0)
+        self.assertGreater(image.pixelColor(320, 100).alpha(), 0)
+
+    def test_delete_one_batch_point_keeps_the_other(self):
+        self.enter_array([(10, 20), (30, 40)])
+        first, second = self.objects()
+        self.window.object_table.selectRow(0)
+        with patch("service.object_table.QMessageBox.question", return_value=QMessageBox.Yes):
+            self.window.object_table.delete_selected_object()
+        self.assertEqual([o.id for o in self.objects()], [second.id])
 
     def test_switching_or_clearing_plan_cancels_unsaved_array(self):
         self.window.start_point_array()
@@ -241,7 +339,7 @@ class PointArrayWindowTests(unittest.TestCase):
             self.window.object_manager.handle_mouse_click(QPointF(x, y))
         with DatabaseManager(str(self.path)) as db:
             db.conn.execute("""CREATE TRIGGER reject_coordinate BEFORE INSERT ON coordinates
-                               WHEN NEW.order_index = 1
+                               WHEN NEW.x = 30
                                BEGIN SELECT RAISE(ABORT, 'blocked'); END""")
             db.conn.commit()
         with patch("service.object_manager.QMessageBox.critical") as message:
@@ -254,7 +352,7 @@ class PointArrayWindowTests(unittest.TestCase):
             db.conn.execute("DROP TRIGGER reject_coordinate")
             db.conn.commit()
         QTest.keyClick(self.window.view, Qt.Key_Return)
-        self.assertEqual(len(self.objects()[0].coordinates), 2)
+        self.assertEqual(len(self.objects()), 2)
 
 
 class PointArrayGeometryTests(unittest.TestCase):

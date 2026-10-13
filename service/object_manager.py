@@ -150,17 +150,16 @@ class ObjectManager:
 
     def _finish_drawing(self):
         """Завершает процесс рисования объекта"""
-        saved_message = None
         if self.is_point_array:
-            name, ok = None, True  # Название присваивается при записи в базу.
-        else:
-            name, ok = QInputDialog.getText(self.main_window, "Название объекта",
-                                            "Введите название объекта:", QLineEdit.Normal)
-        if ok and (name or self.is_point_array):
+            self.finish_point_array()
+            return
+        name, ok = QInputDialog.getText(self.main_window, "Название объекта",
+                                        "Введите название объекта:", QLineEdit.Normal)
+        if ok and name:
             new_object = Object(
                 id=None,
                 image_id=self._get_current_image_id(),
-                name=name or "",
+                name=name,
                 R1=0.0, R2=0.0, R3=0.0, R4=0.0, R5=0.0, R6=0.0,
                 object_type=self.current_object_type,
                 coordinates=self.temp_coordinates
@@ -169,18 +168,44 @@ class ObjectManager:
             if not self._save_object(new_object):
                 return  # Оставляем точки для повторной попытки или отмены.
             self._update_display()
-            if self.is_point_array:
-                self.main_window.object_table.selectRow(self.main_window.object_table.rowCount() - 1)
-                saved_message = f"Массив '{new_object.name}' сохранен: {len(new_object.coordinates)} точек"
 
         self.cancel_drawing()
-        if saved_message:
-            self.main_window.statusBar().showMessage(saved_message, self.main_window.time_status)
 
     def finish_point_array(self):
-        """Сохраняет непустой массив; Enter без точек не создает объект."""
-        if self.is_drawing and self.is_point_array and self.temp_coordinates:
-            self._finish_drawing()
+        """Сохраняет каждую введенную точку отдельным объектом одной транзакцией."""
+        if not (self.is_drawing and self.is_point_array and self.temp_coordinates):
+            return
+        try:
+            with DatabaseManager(self.main_window.db_handler.current_db_path) as db:
+                names = db.conn.execute(
+                    "SELECT name FROM objects WHERE image_id = ?", (self._get_current_image_id(),)
+                ).fetchall()
+                numbers = [
+                    int(match.group(1)) for (name,) in names
+                    if (match := re.fullmatch(r"массив_(\d+)", name))
+                ]
+                first_number = max(numbers, default=0) + 1
+                objects = [
+                    Object(
+                        id=None, image_id=self._get_current_image_id(),
+                        name=f"массив_{first_number + i}",
+                        R1=0.0, R2=0.0, R3=0.0, R4=0.0, R5=0.0, R6=0.0,
+                        object_type=ObjectType.POINT,
+                        coordinates=[Coordinate(None, 0, coord.x, coord.y, 0)]
+                    )
+                    for i, coord in enumerate(self.temp_coordinates)
+                ]
+                db.objects.create_many(objects)
+        except Exception as e:
+            QMessageBox.critical(self.main_window, "Ошибка",
+                                 f"Не удалось сохранить точки: {str(e)}")
+            return  # Ни одна точка не записана; можно повторить Enter или отменить.
+        self._update_display()
+        self.cancel_drawing()
+        self.main_window.statusBar().showMessage(
+            f"Сохранено отдельных точечных объектов: {len(objects)}",
+            self.main_window.time_status
+        )
 
     def cancel_drawing(self):
         """Отменяет ввод, не записывая временные координаты в базу."""
@@ -199,15 +224,6 @@ class ObjectManager:
         """Сохраняет объект в базу данных"""
         try:
             with DatabaseManager(self.main_window.db_handler.current_db_path) as db:
-                if self.is_point_array:
-                    names = db.conn.execute(
-                        "SELECT name FROM objects WHERE image_id = ?", (obj.image_id,)
-                    ).fetchall()
-                    numbers = [
-                        int(match.group(1)) for (name,) in names
-                        if (match := re.fullmatch(r"массив_(\d+)", name))
-                    ]
-                    obj.name = f"массив_{max(numbers, default=0) + 1}"
                 obj.id = db.objects.create(obj)
             return True
         except Exception as e:

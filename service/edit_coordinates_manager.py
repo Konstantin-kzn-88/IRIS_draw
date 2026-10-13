@@ -1,6 +1,6 @@
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
-from iris_db.models import Coordinate, ObjectType
+from PySide6.QtWidgets import QMessageBox
+from iris_db.models import Coordinate
 from iris_db.database import DatabaseManager
 from .temp_drawing import TempDrawingManager
 
@@ -13,7 +13,6 @@ class EditCoordinatesManager:
         self.current_object = None
         self.temp_coordinates = []
         self.is_editing = False
-        self.is_point_array = False
         self.temp_drawing = TempDrawingManager(main_window.view.scene())
 
     def start_editing_coordinates(self, object_id: int):
@@ -30,10 +29,6 @@ class EditCoordinatesManager:
                     raise ValueError("Объект не найден")
 
                 self.is_editing = True
-                self.is_point_array = (
-                    self.current_object.object_type == ObjectType.POINT
-                    and len(self.current_object.coordinates) > 1
-                )
                 self.temp_coordinates = []
 
                 # Включаем отслеживание мыши
@@ -47,9 +42,9 @@ class EditCoordinatesManager:
 
                 # Показываем сообщение в статусбаре
                 self.main_window.statusBar().showMessage(
-                    "Кликайте для добавления новых координат. "
-                    "Двойной клик — завершить, Esc — отменить."
-                    + (" Enter — сохранить массив." if self.is_point_array else "")
+                    "Кликните для перемещения точки. Esc — отменить."
+                    if self.current_object.object_type.value == 'point' else
+                    "Кликайте для добавления новых координат. Двойной клик — завершить, Esc — отменить."
                 )
 
         except Exception as e:
@@ -70,27 +65,6 @@ class EditCoordinatesManager:
     def handle_mouse_click(self, scene_pos: QPointF, double_click: bool = False):
         """Обрабатывает клик мыши при редактировании координат"""
         if not self.is_editing:
-            return
-
-        if self.is_point_array:
-            repeats_last = False
-            if double_click and self.temp_coordinates:
-                last = self.temp_coordinates[-1]
-                screen_delta = self.main_window.view.mapFromScene(scene_pos) - \
-                    self.main_window.view.mapFromScene(QPointF(last.x, last.y))
-                repeats_last = screen_delta.manhattanLength() <= QApplication.startDragDistance()
-            duplicate = any(
-                c.x == scene_pos.x() and c.y == scene_pos.y()
-                for c in self.temp_coordinates
-            )
-            if not repeats_last and not duplicate:
-                self.temp_coordinates.append(Coordinate(
-                    None, self.current_object.id, scene_pos.x(), scene_pos.y(),
-                    len(self.temp_coordinates)
-                ))
-                self.temp_drawing.add_point(scene_pos)
-            if double_click:
-                self.finish_point_array()
             return
 
         new_coord = Coordinate(
@@ -139,7 +113,7 @@ class EditCoordinatesManager:
         """Сохраняет изменения координат в базу данных"""
         try:
             # Проверяем минимальное количество координат
-            if (self.current_object.object_type.value == 'point' and not self.temp_coordinates) or \
+            if (self.current_object.object_type.value == 'point' and len(self.temp_coordinates) != 1) or \
                     (self.current_object.object_type.value == 'linear' and len(self.temp_coordinates) < 2) or \
                     (self.current_object.object_type.value == 'stationary' and len(self.temp_coordinates) < 4):
                 raise ValueError("Недостаточно координат для данного типа объекта")
@@ -168,15 +142,10 @@ class EditCoordinatesManager:
         finally:
             self.cancel_editing()
 
-    def finish_point_array(self):
-        if self.is_editing and self.is_point_array and self.temp_coordinates:
-            self._save_changes()
-
     def cancel_editing(self):
         """Отменяет редактирование координат"""
         was_editing = self.is_editing
         self.is_editing = False
-        self.is_point_array = False
         self.current_object = None
         self.temp_coordinates = []
         self.temp_drawing.clear_temp_items()

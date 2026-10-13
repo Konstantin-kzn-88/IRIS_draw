@@ -62,22 +62,28 @@ class ObjectRepository:
         self.coordinate_repo = CoordinateRepository(conn)
 
     def create(self, obj: Object) -> int:
-        if not obj.validate_coordinates():
-            raise ValueError(f"Invalid coordinates for object type {obj.object_type}")
+        return self.create_many([obj])[0]
+
+    def create_many(self, objects: List[Object]) -> List[int]:
+        """Сохраняет пакет отдельных объектов; ошибка откатывает весь пакет."""
+        for obj in objects:
+            if not obj.validate_coordinates():
+                raise ValueError(f"Invalid coordinates for object type {obj.object_type}")
 
         with self.conn:
-            cursor = self.conn.execute("""
-                INSERT INTO objects (
-                    image_id, name, R1, R2, R3, R4, R5, R6, object_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (obj.image_id, obj.name, obj.R1, obj.R2, obj.R3,
-                  obj.R4, obj.R5, obj.R6, obj.object_type.value))
+            for obj in objects:
+                cursor = self.conn.execute("""
+                    INSERT INTO objects (
+                        image_id, name, R1, R2, R3, R4, R5, R6, object_type
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (obj.image_id, obj.name, obj.R1, obj.R2, obj.R3,
+                      obj.R4, obj.R5, obj.R6, obj.object_type.value))
 
-            obj.id = cursor.lastrowid
-            for coord in obj.coordinates:
-                coord.object_id = obj.id
-                self.coordinate_repo.create(coord, commit=False)
-        return obj.id
+                obj.id = cursor.lastrowid
+                for coord in obj.coordinates:
+                    coord.object_id = obj.id
+                    self.coordinate_repo.create(coord, commit=False)
+        return [obj.id for obj in objects]
 
     def update(self, obj: Object) -> None:
         if not obj.validate_coordinates():

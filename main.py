@@ -271,9 +271,6 @@ class ScaleGraphicsView(QGraphicsView):
             if event.key() == Qt.Key_Escape:
                 editor.cancel_editing()
                 return
-            if editor.is_point_array and event.key() in (Qt.Key_Return, Qt.Key_Enter):
-                editor.finish_point_array()
-                return
         super().keyPressEvent(event)
 
 
