@@ -113,6 +113,10 @@ class MeasurementTools:
             )
             return False
 
+        self.main_window.object_manager.cancel_drawing()
+        self.main_window.edit_coordinates_manager.cancel_editing()
+        if self.main_window.view.scale_mode:
+            self.main_window.toggle_scale_mode()
         return True
 
     def _add_point_marker(self, point: QPointF):

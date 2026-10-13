@@ -1,6 +1,6 @@
 # object_table.py
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QMenu, QMainWindow
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSignalBlocker
 
 from iris_db.database import DatabaseManager
 from iris_db.models import Object, ObjectType
@@ -141,6 +141,8 @@ class ObjectTableWidget(QTableWidget):
 
     def add_object(self, obj: Object):
         """Добавляет объект в таблицу"""
+        # Загрузка ячеек не должна повторно записывать объект и координаты.
+        blocker = QSignalBlocker(self)
         row = self.rowCount()
         self.insertRow(row)
 

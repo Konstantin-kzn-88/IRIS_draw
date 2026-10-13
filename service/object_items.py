@@ -64,22 +64,15 @@ class PointObjectItem(BaseObjectItem):
     def __init__(self, obj: Object, scene):
         super().__init__(obj)
 
-        # Создаем круг в точке расположения объекта
-        coord = obj.coordinates[0]
+        # Каждая координата массива отображается отдельной точкой.
         radius = 5  # Радиус точки в пикселях
-        ellipse = QGraphicsEllipseItem(
-            coord.x - radius,
-            coord.y - radius,
-            radius * 2,
-            radius * 2
-        )
-
-        # Настраиваем отображение
-        pen = QPen(QColor('blue'), 1)
-        ellipse.setPen(pen)
-
-        self.items.append(ellipse)
-        scene.addItem(ellipse)
+        for coord in obj.coordinates:
+            ellipse = QGraphicsEllipseItem(
+                coord.x - radius, coord.y - radius, radius * 2, radius * 2
+            )
+            ellipse.setPen(QPen(QColor('blue'), 1))
+            self.items.append(ellipse)
+            scene.addItem(ellipse)
 
 
 class LinearObjectItem(BaseObjectItem):

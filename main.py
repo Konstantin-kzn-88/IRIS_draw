@@ -107,6 +107,8 @@ class ScaleGraphicsView(QGraphicsView):
             return
 
         if self.parent.edit_coordinates_manager.is_editing:
+            if event.button() != Qt.LeftButton:
+                return
             scene_pos = self.mapToScene(event.pos())
             if event.type() == QEvent.MouseButtonDblClick:
                 self.parent.edit_coordinates_manager.handle_mouse_click(scene_pos, double_click=True)
@@ -115,6 +117,8 @@ class ScaleGraphicsView(QGraphicsView):
             return
 
         if self.parent.object_manager.is_drawing:
+            if event.button() != Qt.LeftButton:
+                return
             scene_pos = self.mapToScene(event.pos())
             if event.type() == QEvent.MouseButtonDblClick:
                 self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
@@ -237,16 +241,40 @@ class ScaleGraphicsView(QGraphicsView):
             return
 
         if self.parent.edit_coordinates_manager.is_editing:
+            if event.button() != Qt.LeftButton:
+                return
             scene_pos = self.mapToScene(event.pos())
             self.parent.edit_coordinates_manager.handle_mouse_click(scene_pos, double_click=True)
             return
 
         if self.parent.object_manager.is_drawing:
+            if event.button() != Qt.LeftButton:
+                return
             scene_pos = self.mapToScene(event.pos())
             self.parent.object_manager.handle_mouse_click(scene_pos, double_click=True)
             return
 
         super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        """Завершение и отмена пакетного ввода с клавиатуры."""
+        manager = self.parent.object_manager
+        editor = self.parent.edit_coordinates_manager
+        if manager.is_drawing:
+            if event.key() == Qt.Key_Escape:
+                manager.cancel_drawing()
+                return
+            if manager.is_point_array and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                manager.finish_point_array()
+                return
+        if editor.is_editing:
+            if event.key() == Qt.Key_Escape:
+                editor.cancel_editing()
+                return
+            if editor.is_point_array and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                editor.finish_point_array()
+                return
+        super().keyPressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -597,6 +625,10 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, t=obj_type: self.start_drawing_object(t))
             objects_menu.addAction(action)
 
+        array_action = QAction(QIcon("ico/object.png"), "Ввести массив точек", self)
+        array_action.triggered.connect(self.start_point_array)
+        objects_menu.addAction(array_action)
+
     def _connect_database(self):
         """Автоматическое подключение при запуске приложения."""
         if self.db_handler.connect_to_database():
@@ -613,11 +645,7 @@ class MainWindow(QMainWindow):
     def _reset_plan_view(self):
         """Очищает план и отменяет действия, связанные с прежней сценой."""
         self.edit_coordinates_manager.cancel_editing()
-        self.object_manager.temp_drawing.clear_temp_items()
-        self.object_manager.is_drawing = False
-        self.object_manager.current_object = None
-        self.object_manager.current_object_type = None
-        self.object_manager.temp_coordinates = []
+        self.object_manager.cancel_drawing()
         self.measurement_tools._finish_measurement()
         self.measurement_tools.measure_type = None
 
@@ -799,6 +827,11 @@ class MainWindow(QMainWindow):
                     raise ValueError("План не найден в базе данных")
 
                 # Очищаем сцену
+                self.edit_coordinates_manager.cancel_editing()
+                self.object_manager.cancel_drawing()
+                self.measurement_tools._finish_measurement()
+                if self.view.scale_mode:
+                    self.toggle_scale_mode()
                 self.scene.clear()
 
                 # Загружаем изображение
@@ -885,6 +918,11 @@ class MainWindow(QMainWindow):
                 db.images.update(current_image)
 
             # Обновляем отображение на сцене
+            self.edit_coordinates_manager.cancel_editing()
+            self.object_manager.cancel_drawing()
+            self.measurement_tools._finish_measurement()
+            if self.view.scale_mode:
+                self.toggle_scale_mode()
             self.scene.clear()
             pixmap_item = self.scene.addPixmap(pixmap)
             self.view.fitInView(
@@ -1033,6 +1071,9 @@ class MainWindow(QMainWindow):
 
         self.view.scale_mode = not self.view.scale_mode
         if self.view.scale_mode:
+            self.object_manager.cancel_drawing()
+            self.edit_coordinates_manager.cancel_editing()
+            self.measurement_tools._finish_measurement()
             self.view.setCursor(Qt.CrossCursor)
             self.statusBar().showMessage("Выберите две точки для измерения масштаба")
         else:
@@ -1210,6 +1251,13 @@ class MainWindow(QMainWindow):
                                 "Сначала выберите план")
             return
         self.object_manager.start_drawing_object(object_type)
+
+    def start_point_array(self):
+        """Размещение нескольких точек одним вводом."""
+        if not self.is_plan_loaded():
+            QMessageBox.warning(self, "Предупреждение", "Сначала выберите план")
+            return
+        self.object_manager.start_point_array()
 
     def load_image(self, image_path):
         """

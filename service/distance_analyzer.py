@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QWidget, QVBoxLayout
 from PySide6.QtCore import Qt
 from iris_db.models import Object, ObjectType
-from shapely.geometry import Point, LineString, Polygon
+from shapely.geometry import MultiPoint, LineString, Polygon
 
 
 class DistanceAnalyzer:
@@ -21,7 +21,7 @@ class DistanceAnalyzer:
         coords = [(coord.x, coord.y) for coord in obj.coordinates]
 
         if obj.object_type == ObjectType.POINT:
-            return Point(coords[0])
+            return MultiPoint(coords)
 
         elif obj.object_type == ObjectType.LINEAR:
             return LineString(coords)

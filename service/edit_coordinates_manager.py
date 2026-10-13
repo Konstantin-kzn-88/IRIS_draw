@@ -1,6 +1,6 @@
-from PySide6.QtCore import QPointF
-from PySide6.QtWidgets import QMessageBox
-from iris_db.models import Object, Coordinate
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtWidgets import QApplication, QMessageBox
+from iris_db.models import Coordinate, ObjectType
 from iris_db.database import DatabaseManager
 from .temp_drawing import TempDrawingManager
 
@@ -13,35 +13,43 @@ class EditCoordinatesManager:
         self.current_object = None
         self.temp_coordinates = []
         self.is_editing = False
+        self.is_point_array = False
         self.temp_drawing = TempDrawingManager(main_window.view.scene())
 
     def start_editing_coordinates(self, object_id: int):
         """Начинает процесс редактирования координат объекта"""
         try:
+            self.cancel_editing()
+            self.main_window.object_manager.cancel_drawing()
+            self.main_window.measurement_tools._finish_measurement()
+            if self.main_window.view.scale_mode:
+                self.main_window.toggle_scale_mode()
             with DatabaseManager(self.main_window.db_handler.current_db_path) as db:
                 self.current_object = db.objects.get_by_id(object_id)
                 if not self.current_object:
                     raise ValueError("Объект не найден")
 
                 self.is_editing = True
+                self.is_point_array = (
+                    self.current_object.object_type == ObjectType.POINT
+                    and len(self.current_object.coordinates) > 1
+                )
                 self.temp_coordinates = []
 
                 # Включаем отслеживание мыши
                 self.main_window.view.setMouseTracking(True)
+                self.main_window.view.setCursor(Qt.CrossCursor)
+                self.main_window.view.setFocus()
 
                 # Скрываем текущий объект на плане
                 if object_id in self.main_window.object_items:
                     self.main_window.object_items[object_id].set_visible(False)
 
-                # Начинаем рисование нового объекта
-                self.temp_drawing.start_drawing(
-                    self.current_object.object_type.value,
-                    QPointF(0, 0)  # Начальная точка будет обновлена при первом клике
-                )
-
                 # Показываем сообщение в статусбаре
                 self.main_window.statusBar().showMessage(
-                    "Кликайте для добавления новых координат. Двойной клик для завершения."
+                    "Кликайте для добавления новых координат. "
+                    "Двойной клик — завершить, Esc — отменить."
+                    + (" Enter — сохранить массив." if self.is_point_array else "")
                 )
 
         except Exception as e:
@@ -62,6 +70,27 @@ class EditCoordinatesManager:
     def handle_mouse_click(self, scene_pos: QPointF, double_click: bool = False):
         """Обрабатывает клик мыши при редактировании координат"""
         if not self.is_editing:
+            return
+
+        if self.is_point_array:
+            repeats_last = False
+            if double_click and self.temp_coordinates:
+                last = self.temp_coordinates[-1]
+                screen_delta = self.main_window.view.mapFromScene(scene_pos) - \
+                    self.main_window.view.mapFromScene(QPointF(last.x, last.y))
+                repeats_last = screen_delta.manhattanLength() <= QApplication.startDragDistance()
+            duplicate = any(
+                c.x == scene_pos.x() and c.y == scene_pos.y()
+                for c in self.temp_coordinates
+            )
+            if not repeats_last and not duplicate:
+                self.temp_coordinates.append(Coordinate(
+                    None, self.current_object.id, scene_pos.x(), scene_pos.y(),
+                    len(self.temp_coordinates)
+                ))
+                self.temp_drawing.add_point(scene_pos)
+            if double_click:
+                self.finish_point_array()
             return
 
         new_coord = Coordinate(
@@ -110,7 +139,7 @@ class EditCoordinatesManager:
         """Сохраняет изменения координат в базу данных"""
         try:
             # Проверяем минимальное количество координат
-            if (self.current_object.object_type.value == 'point' and len(self.temp_coordinates) != 1) or \
+            if (self.current_object.object_type.value == 'point' and not self.temp_coordinates) or \
                     (self.current_object.object_type.value == 'linear' and len(self.temp_coordinates) < 2) or \
                     (self.current_object.object_type.value == 'stationary' and len(self.temp_coordinates) < 4):
                 raise ValueError("Недостаточно координат для данного типа объекта")
@@ -124,6 +153,10 @@ class EditCoordinatesManager:
 
             # Обновляем отображение
             self.main_window.load_objects_from_image(self.current_object.image_id)
+            for row in range(self.main_window.object_table.rowCount()):
+                if int(self.main_window.object_table.item(row, 0).text()) == self.current_object.id:
+                    self.main_window.object_table.selectRow(row)
+                    break
             self.main_window.statusBar().showMessage("Координаты успешно обновлены", 3000)
 
         except Exception as e:
@@ -135,11 +168,20 @@ class EditCoordinatesManager:
         finally:
             self.cancel_editing()
 
+    def finish_point_array(self):
+        if self.is_editing and self.is_point_array and self.temp_coordinates:
+            self._save_changes()
+
     def cancel_editing(self):
         """Отменяет редактирование координат"""
+        was_editing = self.is_editing
         self.is_editing = False
+        self.is_point_array = False
         self.current_object = None
         self.temp_coordinates = []
         self.temp_drawing.clear_temp_items()
-        self.main_window.view.setMouseTracking(False)
+        self.main_window.view.setMouseTracking(True)
+        self.main_window.view.setCursor(Qt.ArrowCursor)
         self.main_window.statusBar().clearMessage()
+        if was_editing:
+            self.main_window.highlight_selected_object()

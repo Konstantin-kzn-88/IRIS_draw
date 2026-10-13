@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRectF
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
@@ -52,15 +52,15 @@ class FilledZoneRenderer:
 
         color = ZONE_COLORS[zone]
         if obj.object_type == ObjectType.POINT:
-            center = obj.coordinates[0]
             painter.setPen(Qt.NoPen)
             painter.setBrush(color)
-            painter.drawEllipse(
-                center.x - radius_px,
-                center.y - radius_px,
-                radius_px * 2,
-                radius_px * 2,
-            )
+            for center in obj.coordinates:
+                painter.drawEllipse(QRectF(
+                    center.x - radius_px,
+                    center.y - radius_px,
+                    radius_px * 2,
+                    radius_px * 2,
+                ))
             return
 
         path = self._object_path(obj)

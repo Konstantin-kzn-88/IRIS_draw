@@ -17,18 +17,7 @@ class TempDrawingManager:
         self.clear_temp_items()
 
         if object_type == "point":
-            # Создаем временную точку
-            radius = 5
-            ellipse = QGraphicsEllipseItem(
-                point.x() - radius,
-                point.y() - radius,
-                radius * 2,
-                radius * 2
-            )
-            pen = QPen(QColor('red'), 2, Qt.DashLine)
-            ellipse.setPen(pen)
-            self.scene.addItem(ellipse)
-            self.temp_items.append(ellipse)
+            self.add_point(point)
 
         elif object_type in ["linear", "stationary"]:
             # Начинаем рисовать путь
@@ -81,6 +70,16 @@ class TempDrawingManager:
         marker.setPen(QPen(Qt.NoPen))
         self.scene.addItem(marker)
         self.temp_items.append(marker)
+
+    def add_point(self, point: QPointF):
+        """Добавляет независимую временную точку без соединяющих линий."""
+        radius = 5
+        ellipse = QGraphicsEllipseItem(
+            point.x() - radius, point.y() - radius, radius * 2, radius * 2
+        )
+        ellipse.setPen(QPen(QColor('red'), 2, Qt.DashLine))
+        self.scene.addItem(ellipse)
+        self.temp_items.append(ellipse)
 
     def close_polygon(self):
         """Замыкает полигон для стационарного объекта"""

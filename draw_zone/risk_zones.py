@@ -3,7 +3,7 @@ from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtCore import QObject, Signal, QRunnable
 import numpy as np
 from shapely import distance as shapely_distance, points as shapely_points
-from shapely.geometry import Point, LineString, Polygon
+from shapely.geometry import Point, MultiPoint, LineString, Polygon
 from iris_db.database import DatabaseManager
 
 # Используем те же константы, что и в example_heatmap.py
@@ -106,6 +106,20 @@ class RadiationWorker(QRunnable):
             dtype=np.float64
         )
 
+        if isinstance(obj, MultiPoint):
+            # Массив эквивалентен отдельным точечным источникам: воздействия
+            # складываются, включая пересечения, как при раздельном вводе.
+            for point in obj.geoms:
+                px_min, py_min, px_max, py_max = self._calculation_bounds(point, radius)
+                if px_min > px_max or py_min > py_max:
+                    continue
+                point_fragment = self._calculate_fragment(
+                    point, radius, px_min, py_min, px_max, py_max
+                )
+                fragment[py_min - y_min:py_max - y_min + 1,
+                         px_min - x_min:px_max - x_min + 1] += point_fragment
+            return fragment
+
         for start_y in range(y_min, y_max + 1, ROW_CHUNK_SIZE):
             stop_y = min(start_y + ROW_CHUNK_SIZE, y_max + 1)
             y_coordinates = np.arange(start_y, stop_y, dtype=np.float64)
@@ -133,7 +147,7 @@ class RadiationWorker(QRunnable):
         obj_type = self.object_in_table['type']
 
         if obj_type == 'point':
-            return Point(coords[0])
+            return Point(coords[0]) if len(coords) == 1 else MultiPoint(coords)
         elif obj_type == 'linear':
             return LineString(coords)
         elif obj_type == 'stationary':

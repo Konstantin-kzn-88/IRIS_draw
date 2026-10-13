@@ -24,6 +24,7 @@ IRIS Draw is a desktop application for working with facility maps and managing i
   - Linear objects
   - Stationary objects
 - Add objects with custom parameters (R1-R6 values)
+- Place an array of independent points in one operation, stored as one point object with shared R1-R6 values
 - Edit object coordinates
 - Delete objects
 - Real-time object highlighting and visualization
@@ -105,6 +106,13 @@ Use **Файл → База данных → Очистить все ген.пл
 2. Click on the plan to place points
 3. Double-click to finish drawing
 4. Enter object name and parameters
+
+### Point Arrays
+Use **Рисовать → Объекты → Ввести массив точек**, then click each location on the plan. Temporary points appear immediately without connecting lines. Press **Enter** or double-click the last location to save the whole array; press **Esc** to cancel. A double-click does not duplicate the last point. An empty array is not saved.
+
+Each array occupies one table row, automatically named `массив_1`, `массив_2`, etc. within the active plan. Rename it and set the shared R1-R6 values in the table. Every coordinate is saved in the existing coordinates table, restored on reopening, and highlighted when the array is selected. Existing single point objects continue to work.
+
+**Редактировать координаты** replaces an array's points with a new set of clicks, finished by Enter or a double-click; Esc retains the saved coordinates. Isolines and filled zones include all points. Same-level overlapping isolines are merged. Distance tables use the nearest pair of points, while risk visualization sums the contributions of all points, as it does for individually entered objects.
 
 ### Measuring Tools
 1. Select the measurement tool (length or area)

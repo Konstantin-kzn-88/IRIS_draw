@@ -59,16 +59,18 @@ class IsolineRenderer:
 
     def _zone_path(self, obj: Object, radius_px: float) -> QPainterPath:
         if obj.object_type == ObjectType.POINT:
-            center = obj.coordinates[0]
             path = QPainterPath()
-            path.addEllipse(
-                QRectF(
-                    center.x - radius_px,
-                    center.y - radius_px,
-                    radius_px * 2,
-                    radius_px * 2,
+            for center in obj.coordinates:
+                circle = QPainterPath()
+                circle.addEllipse(
+                    QRectF(
+                        center.x - radius_px,
+                        center.y - radius_px,
+                        radius_px * 2,
+                        radius_px * 2,
+                    )
                 )
-            )
+                path = circle if path.isEmpty() else path.united(circle)
             return path
 
         object_path = self._object_path(obj)

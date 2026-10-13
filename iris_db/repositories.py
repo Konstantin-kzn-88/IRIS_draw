@@ -9,14 +9,15 @@ class CoordinateRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def create(self, coordinate: Coordinate) -> int:
+    def create(self, coordinate: Coordinate, commit: bool = True) -> int:
         cursor = self.conn.cursor()
         cursor.execute("""
             INSERT INTO coordinates (object_id, x, y, order_index)
             VALUES (?, ?, ?, ?)
         """, (coordinate.object_id, coordinate.x, coordinate.y, coordinate.order_index))
         coordinate.id = cursor.lastrowid
-        self.conn.commit()
+        if commit:
+            self.conn.commit()
         return coordinate.id
 
     def update(self, coordinate: Coordinate) -> None:
@@ -64,44 +65,38 @@ class ObjectRepository:
         if not obj.validate_coordinates():
             raise ValueError(f"Invalid coordinates for object type {obj.object_type}")
 
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT INTO objects (
-                image_id, name, R1, R2, R3, R4, R5, R6, object_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (obj.image_id, obj.name, obj.R1, obj.R2, obj.R3,
-              obj.R4, obj.R5, obj.R6, obj.object_type.value))
+        with self.conn:
+            cursor = self.conn.execute("""
+                INSERT INTO objects (
+                    image_id, name, R1, R2, R3, R4, R5, R6, object_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (obj.image_id, obj.name, obj.R1, obj.R2, obj.R3,
+                  obj.R4, obj.R5, obj.R6, obj.object_type.value))
 
-        obj.id = cursor.lastrowid
-
-        # Сохраняем координаты
-        for coord in obj.coordinates:
-            coord.object_id = obj.id
-            self.coordinate_repo.create(coord)
-
-        self.conn.commit()
+            obj.id = cursor.lastrowid
+            for coord in obj.coordinates:
+                coord.object_id = obj.id
+                self.coordinate_repo.create(coord, commit=False)
         return obj.id
 
     def update(self, obj: Object) -> None:
         if not obj.validate_coordinates():
             raise ValueError(f"Invalid coordinates for object type {obj.object_type}")
 
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE objects
-            SET image_id=?, name=?, R1=?, R2=?, R3=?, R4=?, R5=?, R6=?,
-                object_type=?, updated_at=CURRENT_TIMESTAMP
-            WHERE id=?
-        """, (obj.image_id, obj.name, obj.R1, obj.R2, obj.R3,
-              obj.R4, obj.R5, obj.R6, obj.object_type.value, obj.id))
+        with self.conn:
+            self.conn.execute("""
+                UPDATE objects
+                SET image_id=?, name=?, R1=?, R2=?, R3=?, R4=?, R5=?, R6=?,
+                    object_type=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=?
+            """, (obj.image_id, obj.name, obj.R1, obj.R2, obj.R3,
+                  obj.R4, obj.R5, obj.R6, obj.object_type.value, obj.id))
 
-        # Удаляем старые координаты и сохраняем новые
-        cursor.execute("DELETE FROM coordinates WHERE object_id=?", (obj.id,))
-        for coord in obj.coordinates:
-            coord.object_id = obj.id
-            self.coordinate_repo.create(coord)
-
-        self.conn.commit()
+            # Все координаты заменяются вместе; при ошибке остаются прежние.
+            self.conn.execute("DELETE FROM coordinates WHERE object_id=?", (obj.id,))
+            for coord in obj.coordinates:
+                coord.object_id = obj.id
+                self.coordinate_repo.create(coord, commit=False)
 
     def delete(self, object_id: int) -> None:
         cursor = self.conn.cursor()
